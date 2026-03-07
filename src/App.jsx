@@ -84,59 +84,68 @@ function Layout({ currentPage, setCurrentPage, onLogout }) {
     <div className="min-h-screen flex flex-col" style={{ background: '#f0f2f5' }}>
 
       {/* ── Top Navbar ─────────────────────────────────────── */}
-      <header className="fixed top-0 inset-x-0 z-50 h-14 flex items-center px-4 shadow-md"
+      <header className="fixed top-0 inset-x-0 z-50 h-14 flex items-center px-4 shadow-md relative"
         style={{ background: 'linear-gradient(90deg,#1e3a5f 0%,#1a5276 100%)' }}>
 
-        {/* Hamburger – mobile only */}
-        <button type="button"
-          onClick={() => setSidebarOpen(v => !v)}
-          className="md:hidden p-2 rounded-md text-blue-200 hover:text-white hover:bg-white/10 mr-3 focus:outline-none"
-        >
-          <IconMenuAlt />
-        </button>
+        {/* Left: Hamburger */}
+        {!sidebarOpen && (
+          <button
+            type="button"
+            onClick={() => setSidebarOpen(true)}
+            className="p-2 rounded-md text-blue-200 hover:text-white hover:bg-white/10 mr-3 focus:outline-none relative z-50"
+          >
+            <IconMenuAlt />
+          </button>
+        )}
 
-        {/* Logo */}
-        <div className="flex items-center gap-2 select-none">
-          <div className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold text-white shadow"
-            style={{ background: '#2e86c1' }}>DR</div>
-          <div className="hidden sm:block">
-            <p className="text-sm font-semibold text-white leading-none tracking-wide">Daily Report</p>
-            <p className="text-[10px] text-blue-300 mt-0.5">ระบบสรุปงานรายวัน</p>
+        {/* Right: Clock + Logout */}
+        <div className="ml-auto flex items-center gap-4 relative z-50">
+          <div className="hidden sm:flex items-center gap-1.5 text-xs text-blue-200">
+            <IconClock />
+            <span>{formattedTime}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => { if (window.confirm('ต้องการออกจากระบบหรือไม่?')) onLogout?.(); }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm text-blue-100 border border-blue-500/50
+              hover:bg-white/10 hover:text-white transition focus:outline-none"
+          >
+            <IconLogout />
+            <span className="hidden sm:inline">ออกจากระบบ</span>
+          </button>
+        </div>
+
+        {/* Center: Logo block */}
+        <div className="absolute inset-x-0 flex justify-center pointer-events-none">
+          <div className="flex items-center gap-2 select-none pointer-events-auto">
+            <div
+              className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold text-white shadow"
+              style={{ background: 'rgb(46, 134, 193)' }}
+            >
+              DR
+            </div>
+            <div className="hidden sm:block">
+              <p className="text-sm font-semibold text-white leading-none tracking-wide">Daily Report</p>
+              <p className="text-[10px] text-blue-300 mt-0.5">ระบบสรุปงานรายวัน</p>
+            </div>
           </div>
         </div>
-
-        {/* Spacer */}
-        <div className="flex-1" />
-
-        {/* Clock */}
-        <div className="hidden sm:flex items-center gap-1.5 text-xs text-blue-200 mr-4">
-          <IconClock />
-          <span>{formattedTime}</span>
-        </div>
-
-        {/* Logout */}
-        <button type="button"
-          onClick={() => { if (window.confirm('ต้องการออกจากระบบหรือไม่?')) onLogout?.(); }}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm text-blue-100 border border-blue-500/50
-            hover:bg-white/10 hover:text-white transition focus:outline-none"
-        >
-          <IconLogout />
-          <span className="hidden sm:inline">ออกจากระบบ</span>
-        </button>
       </header>
 
-      {/* ── Sidebar backdrop (mobile) ─────────────────────── */}
+      {/* ── Sidebar backdrop ─────────────────────────────── */}
       {sidebarOpen && (
-        <div className="fixed inset-0 bg-black/50 z-40 md:hidden"
-          onClick={() => setSidebarOpen(false)} />
+        <div
+          className="fixed inset-0 bg-black/50 z-40"
+          onClick={() => setSidebarOpen(false)}
+        />
       )}
 
       <div className="flex flex-1 pt-14">
 
         {/* ── Sidebar ─────────────────────────────────────── */}
         <aside className={`fixed inset-y-0 left-0 z-50 w-60 pt-14 flex flex-col
-            shadow-xl transition-transform duration-200 ease-in-out
-            md:translate-x-0 ${ sidebarOpen ? 'translate-x-0' : '-translate-x-full' }`}
+          shadow-xl transition-transform duration-200 ease-in-out
+          ${ sidebarOpen ? 'translate-x-0' : '-translate-x-full' }`}
           style={{ background: '#1a2943' }}>
 
           {/* User badge */}
@@ -177,7 +186,7 @@ function Layout({ currentPage, setCurrentPage, onLogout }) {
         </aside>
 
         {/* ── Main ────────────────────────────────────────── */}
-        <main className="flex-1 md:ml-60 px-4 sm:px-6 lg:px-8 py-6 min-w-0">
+        <main className="flex-1 px-4 sm:px-6 lg:px-8 py-6 min-w-0">
           {currentPage === PAGES.DAILY    && <DailyPage now={now} />}
           {currentPage === PAGES.SUMMARY  && <SummaryPage />}
           {currentPage === PAGES.CALENDAR && <CalendarPage />}
