@@ -181,7 +181,7 @@ function Layout({ currentPage, setCurrentPage, onLogout }) {
           </nav>
 
           <div className="px-4 py-3 border-t text-[10px] text-blue-600" style={{ borderColor: '#243556' }}>
-            © 2026 Daily Report System
+            © Private Daily Report System
           </div>
         </aside>
 
@@ -1268,7 +1268,6 @@ function MediaPage() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
         <div>
           <h1 className="text-xl font-bold text-slate-800">บันทึกภาพและวิดีโอ</h1>
-          <p className="text-xs text-slate-500 mt-0.5">อัปโหลดไฟล์ไปยัง Supabase Storage</p>
         </div>
         <span className="inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium text-white shadow-sm self-start"
           style={{ background: '#1e3a5f' }}>
