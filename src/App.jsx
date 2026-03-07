@@ -80,23 +80,60 @@ function Layout({ currentPage, setCurrentPage, onLogout }) {
     dateStyle: 'short', timeStyle: 'medium',
   }).format(now);
 
+  const handleNavLeave = async () => {
+    if (!supabase) {
+      alert('ยังไม่ได้ตั้งค่า Supabase (VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY)');
+      return;
+    }
+
+    const confirmLeave = window.confirm('ต้องการบันทึกการลาวันนี้หรือไม่?');
+    if (!confirmLeave) return;
+
+    const today = new Date().toISOString().slice(0, 10);
+
+    const { error } = await supabase.from('daily_reports').insert({
+      date: today,
+      location: '',
+      work_today: 'ลา',
+      problems: null,
+      cause: null,
+      solution: null,
+      result: null,
+    });
+
+    if (error) {
+      alert('บันทึกการลาไม่สำเร็จ: ' + error.message);
+    } else {
+      alert('บันทึกการลาสำเร็จ');
+    }
+  };
+
   return (
     <div className="min-h-screen flex flex-col" style={{ background: '#f0f2f5' }}>
 
       {/* ── Top Navbar ─────────────────────────────────────── */}
-      <header className="fixed top-0 inset-x-0 z-50 h-14 flex items-center px-4 shadow-md relative"
+      <header className="no-print fixed top-0 inset-x-0 z-50 h-14 flex items-center px-4 shadow-md relative"
         style={{ background: 'linear-gradient(90deg,#1e3a5f 0%,#1a5276 100%)' }}>
 
-        {/* Left: Hamburger */}
-        {!sidebarOpen && (
+        {/* Left: Hamburger + Leave */}
+        <div className="flex items-center gap-2 relative z-50">
+          {!sidebarOpen && (
+            <button
+              type="button"
+              onClick={() => setSidebarOpen(true)}
+              className="p-2 rounded-md text-blue-200 hover:text-white hover:bg-white/10 focus:outline-none"
+            >
+              <IconMenuAlt />
+            </button>
+          )}
           <button
             type="button"
-            onClick={() => setSidebarOpen(true)}
-            className="p-2 rounded-md text-blue-200 hover:text-white hover:bg-white/10 mr-3 focus:outline-none relative z-50"
+            onClick={handleNavLeave}
+            className="px-4 py-2 rounded-lg text-sm font-semibold border border-green-500 bg-green-500 text-white hover:bg-green-600 focus:outline-none shadow-sm"
           >
-            <IconMenuAlt />
+            ลา
           </button>
-        )}
+        </div>
 
         {/* Right: Clock + Logout */}
         <div className="ml-auto flex items-center gap-4 relative z-50">
@@ -143,7 +180,7 @@ function Layout({ currentPage, setCurrentPage, onLogout }) {
       <div className="flex flex-1 pt-14">
 
         {/* ── Sidebar ─────────────────────────────────────── */}
-        <aside className={`fixed inset-y-0 left-0 z-50 w-60 pt-14 flex flex-col
+        <aside className={`no-print fixed inset-y-0 left-0 z-50 w-60 pt-14 flex flex-col
           shadow-xl transition-transform duration-200 ease-in-out
           ${ sidebarOpen ? 'translate-x-0' : '-translate-x-full' }`}
           style={{ background: '#1a2943' }}>
@@ -214,7 +251,7 @@ function LoginPage({ onLogin }) {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4"
+    <div className="no-print min-h-screen flex items-center justify-center px-4"
       style={{ background: 'linear-gradient(135deg,#1e3a5f 0%,#1a5276 60%,#2e86c1 100%)' }}>
 
       {/* Card */}
@@ -328,7 +365,6 @@ function DailyPage({ now }) {
       setMessage('ยังไม่ได้ตั้งค่า Supabase (VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY)');
       return;
     }
-
     const { error } = await supabase.from('daily_reports').insert({
       date: form.date || new Date().toISOString().slice(0, 10),
       location: form.location,
@@ -359,7 +395,7 @@ function DailyPage({ now }) {
     <div className="max-w-4xl mx-auto space-y-5">
 
       {/* Page header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
+      <div className="no-print flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
         <div>
           <h1 className="text-xl font-bold text-slate-800">สรุปงานรายวัน</h1>
           <p className="text-xs text-slate-500 mt-0.5">{formattedNow}</p>
@@ -446,6 +482,8 @@ function SummaryPage() {
   const [editMessage, setEditMessage] = useState('');
   const [copyItem, setCopyItem] = useState(null);
   const [copyFields, setCopyFields] = useState([]);
+  const [filterStartDate, setFilterStartDate] = useState('');
+  const [filterEndDate, setFilterEndDate] = useState('');
 
   useEffect(() => {
     async function fetchData() {
@@ -486,6 +524,24 @@ function SummaryPage() {
     if (a === 'ไม่ทราบวันที่') return 1;
     if (b === 'ไม่ทราบวันที่') return -1;
     return new Date(b) - new Date(a);
+  });
+
+  const filteredDates = sortedDates.filter((dateKey) => {
+    if (dateKey === 'ไม่ทราบวันที่') {
+      return !filterStartDate && !filterEndDate;
+    }
+    const time = new Date(dateKey).getTime();
+    if (Number.isNaN(time)) return false;
+
+    if (filterStartDate) {
+      const startTime = new Date(filterStartDate).getTime();
+      if (time < startTime) return false;
+    }
+    if (filterEndDate) {
+      const endTime = new Date(filterEndDate).getTime();
+      if (time > endTime) return false;
+    }
+    return true;
   });
 
   const formatThaiDate = (isoDate) => {
@@ -705,26 +761,53 @@ function SummaryPage() {
     <div className="max-w-5xl mx-auto space-y-5">
 
       {/* Page header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
+      <div className="no-print flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
         <div>
           <h1 className="text-xl font-bold text-slate-800">รายการสรุปทั้งหมด</h1>
           <p className="text-xs text-slate-500 mt-0.5">แสดงสรุปงานที่บันทึก แยกตามวันที่</p>
         </div>
-        <span className="inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium text-white shadow-sm self-start"
-          style={{ background: '#1e3a5f' }}>
-          <IconEdit /> รายการสรุป
-        </span>
+        <div className="flex flex-wrap items-center gap-2 self-start">
+          <span
+            className="inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium text-white shadow-sm"
+            style={{ background: '#1e3a5f' }}
+          >
+            <IconEdit /> รายการสรุป
+          </span>
+          <div className="flex flex-wrap items-center gap-1 text-[11px] text-slate-500">
+            <span>ช่วงวันที่:</span>
+            <input
+              type="date"
+              value={filterStartDate}
+              onChange={(e) => setFilterStartDate(e.target.value)}
+              className="rounded border border-gray-300 bg-white px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-500"
+            />
+            <span>-</span>
+            <input
+              type="date"
+              value={filterEndDate}
+              onChange={(e) => setFilterEndDate(e.target.value)}
+              className="rounded border border-gray-300 bg-white px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-500"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => window.print()}
+            className="inline-flex items-center gap-1 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-gray-50 focus:outline-none transition"
+          >
+            พิมพ์ / บันทึกเป็น PDF (A4)
+          </button>
+        </div>
       </div>
 
       {loading && <p className="text-sm text-slate-500">กำลังโหลดข้อมูล...</p>}
       {!loading && error && <p className="text-sm text-red-600">{error}</p>}
-      {!loading && !error && items.length === 0 && (
+      {!loading && !error && filteredDates.length === 0 && (
         <div className="bg-white rounded-xl border border-dashed border-gray-300 py-16 text-center">
           <p className="text-sm text-slate-400">ยังไม่มีข้อมูลสรุปงาน</p>
         </div>
       )}
 
-      {!loading && !error && sortedDates.map((dateKey) => {
+      {!loading && !error && filteredDates.map((dateKey) => {
         const group = groups[dateKey];
         return (
           <article key={dateKey} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
@@ -739,7 +822,7 @@ function SummaryPage() {
                 </h2>
               </div>
               <button type="button" onClick={() => handleCopyDay(dateKey)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-blue-400/50 bg-white/10 px-3 py-1.5
+                className="no-print inline-flex items-center gap-1.5 rounded-lg border border-blue-400/50 bg-white/10 px-3 py-1.5
                   text-xs font-medium text-white hover:bg-white/20 focus:outline-none transition whitespace-nowrap">
                 <IconCopy /> คัดลอกทั้งวัน
               </button>
@@ -757,7 +840,7 @@ function SummaryPage() {
                       </div>
                     ))}
                   </div>
-                  <div className="flex flex-wrap gap-2 justify-end">
+                  <div className="no-print flex flex-wrap gap-2 justify-end">
                     <button type="button" onClick={() => openEdit(item)}
                       className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5
                         text-xs font-medium text-blue-700 hover:bg-blue-100 focus:outline-none transition">
@@ -1269,14 +1352,25 @@ function MediaPage() {
         <div>
           <h1 className="text-xl font-bold text-slate-800">บันทึกภาพและวิดีโอ</h1>
         </div>
-        <span className="inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium text-white shadow-sm self-start"
-          style={{ background: '#1e3a5f' }}>
-          <IconPhoto /> สื่อและไฟล์
-        </span>
+        <div className="flex flex-wrap items-center gap-2 self-start">
+          <span
+            className="inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium text-white shadow-sm"
+            style={{ background: '#1e3a5f' }}
+          >
+            <IconPhoto /> สื่อและไฟล์
+          </span>
+          <button
+            type="button"
+            onClick={() => window.print()}
+            className="inline-flex items-center gap-1 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-gray-50 focus:outline-none transition"
+          >
+            พิมพ์ / บันทึกเป็น PDF (A4)
+          </button>
+        </div>
       </div>
 
       {/* Upload card */}
-      <section className="bg-white rounded-xl shadow border border-gray-100 overflow-hidden">
+      <section className="no-print bg-white rounded-xl shadow border border-gray-100 overflow-hidden">
         <div className="px-5 py-4 border-b border-gray-100"
           style={{ background: 'linear-gradient(90deg,#1e3a5f 0%,#1a5276 100%)' }}>
           <h2 className="text-sm font-semibold text-white">เพิ่มไฟล์ใหม่</h2>
@@ -1286,7 +1380,7 @@ function MediaPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label htmlFor="upload-date"
-                className="block text-[11px] font-semibold uppercase tracking-wide text-slate-500 mb-1">เลือกวันที่</label>
+                className="block text-[11px] font-semibold uppercase tracking-wide text-slate-500 mb-1">เลือกวันที่ดูไฟล์ / Export</label>
               <input type="date" id="upload-date" value={uploadDate}
                 onChange={e => setUploadDate(e.target.value)}
                 className="block w-full rounded-lg border border-gray-200 bg-slate-50 px-3 py-2.5 text-sm
@@ -1346,28 +1440,54 @@ function MediaPage() {
 
         {!filesLoading && !filesError && files.length > 0 && (
           <div className="divide-y divide-gray-100">
-            {files.map((f) => (
-              <div key={f.name}
-                className="flex items-center gap-3 px-5 py-3 hover:bg-slate-50 transition">
-                {/* Thumbnail */}
-                {isImageFile(f.name) && f.publicUrl
-                  ? <img src={f.publicUrl} alt={f.name}
-                      className="w-12 h-12 rounded-lg object-cover border border-gray-200 shrink-0" />
-                  : <div className="w-12 h-12 rounded-lg flex items-center justify-center shrink-0"
-                      style={{ background: '#eaf4fb' }}>
-                      <svg className="w-6 h-6 text-blue-400" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+            {files.map((f) => {
+              const isImage = isImageFile(f.name);
+              return (
+                <div
+                  key={f.name}
+                  className={`media-row flex items-center gap-3 px-5 py-3 hover:bg-slate-50 transition ${
+                    isImage ? 'media-image-row' : 'media-video-row'
+                  }`}
+                >
+                  {/* Thumbnail */}
+                  {isImage && f.publicUrl ? (
+                    <img
+                      src={f.publicUrl}
+                      alt={f.name}
+                      className="media-image-thumb w-12 h-12 rounded-lg object-cover border border-gray-200 shrink-0"
+                    />
+                  ) : (
+                    <div
+                      className="w-12 h-12 rounded-lg flex items-center justify-center shrink-0"
+                      style={{ background: '#eaf4fb' }}
+                    >
+                      <svg
+                        className="w-6 h-6 text-blue-400"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
+                        />
                       </svg>
                     </div>
-                }
-                <span className="flex-1 min-w-0 text-sm text-slate-700 truncate">{f.name}</span>
-                <button type="button" onClick={() => handleDeleteFile(f.name)}
-                  className="shrink-0 inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50
-                    px-2.5 py-1.5 text-xs font-medium text-red-600 hover:bg-red-100 focus:outline-none transition">
-                  <IconTrash /> ลบ
-                </button>
-              </div>
-            ))}
+                  )}
+                  <span className="flex-1 min-w-0 text-sm text-slate-700 truncate">{f.name}</span>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteFile(f.name)}
+                    className="no-print shrink-0 inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50
+                    px-2.5 py-1.5 text-xs font-medium text-red-600 hover:bg-red-100 focus:outline-none transition"
+                  >
+                    <IconTrash /> ลบ
+                  </button>
+                </div>
+              );
+            })}
           </div>
         )}
       </section>
