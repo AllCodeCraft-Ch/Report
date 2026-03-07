@@ -80,34 +80,6 @@ function Layout({ currentPage, setCurrentPage, onLogout }) {
     dateStyle: 'short', timeStyle: 'medium',
   }).format(now);
 
-  const handleNavLeave = async () => {
-    if (!supabase) {
-      alert('ยังไม่ได้ตั้งค่า Supabase (VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY)');
-      return;
-    }
-
-    const confirmLeave = window.confirm('ต้องการบันทึกการลาวันนี้หรือไม่?');
-    if (!confirmLeave) return;
-
-    const today = new Date().toISOString().slice(0, 10);
-
-    const { error } = await supabase.from('daily_reports').insert({
-      date: today,
-      location: '',
-      work_today: 'ลา',
-      problems: null,
-      cause: null,
-      solution: null,
-      result: null,
-    });
-
-    if (error) {
-      alert('บันทึกการลาไม่สำเร็จ: ' + error.message);
-    } else {
-      alert('บันทึกการลาสำเร็จ');
-    }
-  };
-
   return (
     <div className="min-h-screen flex flex-col" style={{ background: '#f0f2f5' }}>
 
@@ -115,7 +87,7 @@ function Layout({ currentPage, setCurrentPage, onLogout }) {
       <header className="no-print fixed top-0 inset-x-0 z-50 h-14 flex items-center px-4 shadow-md relative"
         style={{ background: 'linear-gradient(90deg,#1e3a5f 0%,#1a5276 100%)' }}>
 
-        {/* Left: Hamburger + Leave */}
+        {/* Left: Hamburger */}
         <div className="flex items-center gap-2 relative z-50">
           {!sidebarOpen && (
             <button
@@ -126,13 +98,6 @@ function Layout({ currentPage, setCurrentPage, onLogout }) {
               <IconMenuAlt />
             </button>
           )}
-          <button
-            type="button"
-            onClick={handleNavLeave}
-            className="px-4 py-2 rounded-lg text-sm font-semibold border border-green-500 bg-green-500 text-white hover:bg-green-600 focus:outline-none shadow-sm"
-          >
-            ลา
-          </button>
         </div>
 
         {/* Right: Clock + Logout */}
@@ -152,8 +117,8 @@ function Layout({ currentPage, setCurrentPage, onLogout }) {
           </button>
         </div>
 
-        {/* Center: Logo block */}
-        <div className="absolute inset-x-0 flex justify-center pointer-events-none">
+        {/* Center: Logo block (hide on small screens to avoid covering buttons) */}
+        <div className="absolute inset-x-0 hidden sm:flex justify-center pointer-events-none">
           <div className="flex items-center gap-2 select-none pointer-events-auto">
             <div
               className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold text-white shadow"
@@ -351,6 +316,37 @@ function DailyPage({ now }) {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
 
+  const handleLeave = async () => {
+    if (!form.date) {
+      alert('กรุณาเลือกวันที่ก่อนบันทึกการลา');
+      return;
+    }
+
+    if (!supabase) {
+      setMessage('ยังไม่ได้ตั้งค่า Supabase (VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY)');
+      return;
+    }
+
+    const confirmLeave = window.confirm('ต้องการบันทึกการลาสำหรับวันที่ที่เลือกหรือไม่?');
+    if (!confirmLeave) return;
+
+    const { error } = await supabase.from('daily_reports').insert({
+      date: form.date,
+      location: '',
+      work_today: 'ลา',
+      problems: null,
+      cause: null,
+      solution: null,
+      result: null,
+    });
+
+    if (error) {
+      setMessage('บันทึกการลาไม่สำเร็จ: ' + error.message);
+    } else {
+      setMessage('บันทึกการลาสำเร็จ');
+    }
+  };
+
   const handleChange = (e) => {
     const { id, value } = e.target;
     setForm((prev) => ({ ...prev, [id]: value }));
@@ -445,16 +441,26 @@ function DailyPage({ now }) {
           )}
 
           <div className="pt-2 flex flex-col sm:flex-row sm:justify-end gap-2">
-            <button type="button"
-              onClick={() => setForm({ date:'',location:'',work:'',problems:'',cause:'',solution:'',result:'' })}
-              className="px-5 py-2 rounded-lg border border-gray-300 text-sm font-medium text-slate-600
-                hover:bg-gray-50 focus:outline-none transition">
+            <button
+              type="button"
+              onClick={() => setForm({ date: '', location: '', work: '', problems: '', cause: '', solution: '', result: '' })}
+              className="px-5 py-2 rounded-lg border border-gray-300 text-sm font-medium text-slate-600 hover:bg-gray-50 focus:outline-none transition"
+            >
               ล้างข้อมูล
             </button>
-            <button type="submit" disabled={loading}
-              className="px-5 py-2 rounded-lg text-sm font-semibold text-white shadow
-                hover:opacity-90 disabled:opacity-60 focus:outline-none transition"
-              style={{ background: 'linear-gradient(90deg,#1e3a5f,#2e86c1)' }}>
+            <button
+              type="button"
+              onClick={handleLeave}
+              className="px-5 py-2 rounded-lg text-sm font-semibold border border-green-500 bg-green-500 text-white hover:bg-green-600 focus:outline-none shadow-sm"
+            >
+              ลา
+            </button>
+            <button
+              type="submit"
+              disabled={loading}
+              className="px-5 py-2 rounded-lg text-sm font-semibold text-white shadow hover:opacity-90 disabled:opacity-60 focus:outline-none transition"
+              style={{ background: 'linear-gradient(90deg,#1e3a5f,#2e86c1)' }}
+            >
               {loading ? 'กำลังบันทึก...' : 'บันทึก'}
             </button>
           </div>
@@ -1160,42 +1166,62 @@ function CalendarPage() {
         {error && <p className="px-5 py-2 text-xs text-red-600 bg-red-50">{error}</p>}
         {loading && <p className="px-5 py-2 text-xs text-slate-500">กำลังโหลดข้อมูล...</p>}
 
-        {/* Grid */}
-        <div className="grid grid-cols-7 gap-px" style={{ background: '#e5e7eb' }}>
-          {daysOfWeek.map((d) => (
-            <div key={d} className="py-2 text-center text-[11px] font-semibold text-slate-500 uppercase tracking-wide"
-              style={{ background: '#f8fafc' }}>
-              {d}
-            </div>
-          ))}
-          {cells.map((cell, index) => {
-            if (!cell) return <div key={`empty-${index}`} className="h-20 sm:h-24" style={{ background: '#f8fafc' }} />;
-            const dayEvents = eventsByDate[cell.iso] || [];
-            const isToday = cell.iso === new Date().toISOString().slice(0,10);
-            return (
-              <button key={cell.iso} type="button" onClick={() => openAddNote(cell.iso)}
-                className="relative flex flex-col items-start bg-white h-20 sm:h-24 p-1.5 sm:p-2 text-left
-                  hover:bg-blue-50 focus:outline-none focus:z-10 transition">
-                <span className={`text-[11px] sm:text-xs font-bold mb-1 w-5 h-5 flex items-center justify-center rounded-full ${
-                  isToday ? 'text-white' : 'text-slate-600'
-                }`} style={isToday ? { background: '#2e86c1' } : {}}>
-                  {cell.day}
-                </span>
-                <div className="space-y-0.5 w-full overflow-hidden">
-                  {dayEvents.slice(0, 2).map((ev) => (
-                    <div key={ev.id}
-                      className="truncate rounded px-1 py-0.5 text-[10px]"
-                      style={{ background: '#eaf4fb', color: '#1a5276' }}>
-                      {ev.note || 'บันทึก'}
-                    </div>
-                  ))}
-                  {dayEvents.length > 2 && (
-                    <p className="text-[10px] text-slate-400">+{dayEvents.length - 2}</p>
-                  )}
-                </div>
-              </button>
-            );
-          })}
+        {/* Grid (scrollable on very small screens) */}
+        <div className="overflow-x-auto -mx-4 sm:mx-0">
+          <div className="min-w-[640px] grid grid-cols-7 gap-px" style={{ background: '#e5e7eb' }}>
+            {daysOfWeek.map((d) => (
+              <div
+                key={d}
+                className="py-2 text-center text-[11px] font-semibold text-slate-500 uppercase tracking-wide"
+                style={{ background: '#f8fafc' }}
+              >
+                {d}
+              </div>
+            ))}
+            {cells.map((cell, index) => {
+              if (!cell)
+                return (
+                  <div
+                    key={`empty-${index}`}
+                    className="h-20 sm:h-24"
+                    style={{ background: '#f8fafc' }}
+                  />
+                );
+              const dayEvents = eventsByDate[cell.iso] || [];
+              const isToday = cell.iso === new Date().toISOString().slice(0, 10);
+              return (
+                <button
+                  key={cell.iso}
+                  type="button"
+                  onClick={() => openAddNote(cell.iso)}
+                  className="relative flex flex-col items-start bg-white h-20 sm:h-24 p-1.5 sm:p-2 text-left hover:bg-blue-50 focus:outline-none focus:z-10 transition"
+                >
+                  <span
+                    className={`text-[11px] sm:text-xs font-bold mb-1 w-5 h-5 flex items-center justify-center rounded-full ${
+                      isToday ? 'text-white' : 'text-slate-600'
+                    }`}
+                    style={isToday ? { background: '#2e86c1' } : {}}
+                  >
+                    {cell.day}
+                  </span>
+                  <div className="space-y-0.5 w-full overflow-hidden">
+                    {dayEvents.slice(0, 2).map((ev) => (
+                      <div
+                        key={ev.id}
+                        className="truncate rounded px-1 py-0.5 text-[10px]"
+                        style={{ background: '#eaf4fb', color: '#1a5276' }}
+                      >
+                        {ev.note || 'บันทึก'}
+                      </div>
+                    ))}
+                    {dayEvents.length > 2 && (
+                      <p className="text-[10px] text-slate-400">+{dayEvents.length - 2}</p>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
         </div>
       </section>
 
