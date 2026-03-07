@@ -1299,8 +1299,8 @@ function MediaPage() {
                 onChange={e => setFile(e.target.files?.[0] || null)}
                 className="block w-full text-sm text-slate-600 rounded-lg border border-gray-200 bg-slate-50 px-3 py-2
                   file:mr-3 file:rounded-md file:border-0 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white
-                  hover:file:opacity-90 focus:outline-none"
-                style={{ '--file-bg': '#1e3a5f' }} />
+                  file:bg-[#1e3a5f] hover:file:bg-[#2e86c1] focus:outline-none"
+              />
             </div>
           </div>
 
