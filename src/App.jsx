@@ -4607,13 +4607,12 @@ function PersonalFinancePage({ ownerId }) {
 
   if (pinMode !== 'open') return (
     <div className="mx-auto max-w-xl space-y-4 rounded-2xl border border-slate-700 bg-slate-900 p-5 text-white shadow-sm sm:p-7">
-      <div><p className="text-xs font-semibold uppercase tracking-[.18em] text-cyan-300">รายการเงิน</p><h1 className="mt-1 text-xl font-bold">ใส่ PIN 6 หลัก</h1><p className="mt-1 text-sm text-slate-400">กรอกรหัสเดียวกันเพื่อเข้าใช้งานได้ทุกอุปกรณ์</p></div>
+      <div><p className="text-xs font-semibold uppercase tracking-[.18em] text-cyan-300">รายการเงิน</p><h1 className="mt-1 text-xl font-bold">ใส่ PIN 6 หลัก</h1></div>
       {pinMode === 'locked' && <form onSubmit={submitPin} className="space-y-4">
         <label className="block"><span className="mb-1 block text-xs font-semibold text-slate-300">PIN ตัวเลข 6 หลัก</span><input type="password" value={pinCode} onChange={(event) => setPinCode(event.target.value.replace(/\D/g, '').slice(0, 6))} inputMode="numeric" autoComplete="new-password" pattern="[0-9]{6}" maxLength={6} required className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-lg tracking-[.3em] text-white" /></label>
         {pinError && <p role="alert" className="text-sm text-rose-300">{pinError}</p>}
         <button type="submit" disabled={pinCode.length !== 6} className="min-h-11 w-full rounded-xl bg-blue-600 px-4 text-sm font-bold text-white disabled:opacity-60">เข้าใช้งาน</button>
       </form>}
-      <p className="text-xs leading-5 text-slate-500">ใช้รหัสเดียวกันได้ทุกอุปกรณ์ การเข้าสู่ระบบและสิทธิ์เข้าถึงข้อมูลยังคงตรวจด้วย Supabase Auth และ RLS</p>
     </div>
   );
 
