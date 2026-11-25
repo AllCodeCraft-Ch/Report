@@ -223,7 +223,6 @@ const NAV_ITEMS = [
   { page: PAGES.CALENDAR, label: 'ปฏิทิน',         Icon: IconCalendar },
   { page: PAGES.MEDIA,    label: 'บันทึกภาพ/วิดีโอ', Icon: IconPhoto },
   { page: PAGES.TRIPS,    label: 'ออกต่างจังหวัด', Icon: IconPlane },
-  { page: PAGES.SYSTEM,   label: 'ระบบ',             Icon: IconSettings },
   { page: PAGES.FINANCE,  label: 'รายการเงิน', Icon: IconSettings },
 ];
 
@@ -500,9 +499,12 @@ function Layout({ currentPage, setCurrentPage, onLogout, user }) {
             </button>
           </div>
 
-          <div className="px-4 py-3 border-t text-[10px] text-blue-600" style={{ borderColor: '#243556' }}>
+          <button type="button" onClick={() => { setCurrentPage(PAGES.SYSTEM); setSidebarOpen(false); }}
+            aria-label="เปิดหน้าระบบ" aria-current={currentPage === PAGES.SYSTEM ? 'page' : undefined}
+            className={`w-full border-t px-4 py-3 text-left text-[10px] transition focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400 ${currentPage === PAGES.SYSTEM ? 'text-white' : 'text-blue-600 hover:text-blue-300'}`}
+            style={{ borderColor: '#243556' }}>
             © Private Daily Report System
-          </div>
+          </button>
         </aside>
 
         {/* ── Main ────────────────────────────────────────── */}
