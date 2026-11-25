@@ -787,6 +787,7 @@ function FinancePinRecoveryPage({ onComplete }) {
       const salt = btoa(String.fromCharCode(...saltBytes));
       const hash = await deriveFinancePinHash(pin, salt);
       localStorage.setItem(`daily-report.finance-pin.v1.${user.id}`, JSON.stringify({ salt, hash }));
+      localStorage.removeItem('daily-report.finance-pin-reset-pending');
       window.history.replaceState({}, document.title, window.location.pathname);
       onComplete?.(user);
     } catch {
@@ -4554,6 +4555,20 @@ async function deriveFinancePinHash(pin, salt) {
   return Array.from(new Uint8Array(bits), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
+function hasPendingFinancePinReset() {
+  try {
+    const requestedAt = Number(localStorage.getItem('daily-report.finance-pin-reset-pending'));
+    return requestedAt > 0 && Date.now() - requestedAt < 30 * 60 * 1000;
+  } catch { return false; }
+}
+
+function isFinancePinResetReturn() {
+  const params = new URLSearchParams(window.location.search);
+  const hash = new URLSearchParams(window.location.hash.slice(1));
+  const hasAuthCallback = params.has('code') || hash.has('type') || hash.has('access_token');
+  return params.get('financePinReset') === '1' || (hasPendingFinancePinReset() && hasAuthCallback);
+}
+
 function PersonalFinancePage({ ownerId, email }) {
   const [pinMode, setPinMode] = useState('checking');
   const [pinError, setPinError] = useState('');
@@ -4633,11 +4648,12 @@ function PersonalFinancePage({ ownerId, email }) {
     if (!email || !supabase) { setPinError('ไม่พบอีเมลบัญชีที่เข้าสู่ระบบ'); return; }
     setPinResetBusy(true);
     try {
-      const redirectTo = `${window.location.origin}${window.location.pathname}?financePinReset=1`;
-      const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+      localStorage.setItem('daily-report.finance-pin-reset-pending', String(Date.now()));
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
       if (resetError) throw resetError;
       setPinResetNotice('ส่งลิงก์ยืนยันไปยังอีเมลบัญชีแล้ว เปิดลิงก์ในอีเมลเพื่อตั้ง PIN ใหม่');
     } catch {
+      try { localStorage.removeItem('daily-report.finance-pin-reset-pending'); } catch { /* Ignore storage cleanup failure. */ }
       setPinError('ส่งลิงก์ไม่สำเร็จ กรุณาลองอีกครั้ง');
     } finally { setPinResetBusy(false); }
   };
@@ -4888,7 +4904,7 @@ export default function App() {
   });
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
-  const [recoveryPending, setRecoveryPending] = useState(() => new URLSearchParams(window.location.hash.slice(1)).get('type') === 'recovery');
+  const [recoveryPending, setRecoveryPending] = useState(() => new URLSearchParams(window.location.hash.slice(1)).get('type') === 'recovery' || (hasPendingFinancePinReset() && new URLSearchParams(window.location.search).has('code')));
   const [authLoading, setAuthLoading] = useState(Boolean(supabase));
 
   useEffect(() => {
@@ -4900,7 +4916,7 @@ export default function App() {
     let active = true;
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (!active) return;
-      if (event === 'PASSWORD_RECOVERY') setRecoveryPending(true);
+      if (event === 'PASSWORD_RECOVERY' || isFinancePinResetReturn()) setRecoveryPending(true);
       if (event === 'INITIAL_SESSION') return;
       const isAdmin = session?.user?.app_metadata?.role === 'admin';
       setCurrentUser(isAdmin ? session.user : null);
@@ -4966,7 +4982,7 @@ export default function App() {
   }
 
   if (recoveryPending) {
-    if (new URLSearchParams(window.location.search).get('financePinReset') === '1') {
+    if (isFinancePinResetReturn()) {
       return <><FinancePinRecoveryPage onComplete={handleFinancePinResetComplete} /><AppDialogLayer /></>;
     }
     return <><PasswordRecoveryPage onComplete={handlePasswordUpdated} /><AppDialogLayer /></>;
