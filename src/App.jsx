@@ -224,7 +224,6 @@ const NAV_ITEMS = [
   { page: PAGES.MEDIA,    label: 'บันทึกภาพ/วิดีโอ', Icon: IconPhoto },
   { page: PAGES.TRIPS,    label: 'ออกต่างจังหวัด', Icon: IconPlane },
   { page: PAGES.SYSTEM,   label: 'ระบบ',             Icon: IconSettings },
-  { page: PAGES.BACKUP,   label: 'สำรองและกู้คืน',   Icon: IconCopy },
   { page: PAGES.FINANCE,  label: 'รายการเงิน', Icon: IconSettings },
 ];
 
@@ -482,12 +481,19 @@ function Layout({ currentPage, setCurrentPage, onLogout, user }) {
 
           {/* User badge */}
           <div className="app-user-badge px-4 py-4 border-t flex items-center gap-3" style={{ borderColor: '#243556' }}>
-            <div className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold text-white shrink-0"
-              style={{ background: '#2e86c1' }}>N</div>
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-white truncate">Natthawut</p>
-              <p className="text-[10px] text-blue-400">Administrator</p>
-            </div>
+            <button type="button" onClick={() => { setCurrentPage(PAGES.BACKUP); setSidebarOpen(false); }}
+              aria-label="Natthawut — สำรองและกู้คืน" aria-current={currentPage === PAGES.BACKUP ? 'page' : undefined}
+              className="flex min-w-0 flex-1 items-center gap-3 rounded-lg text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400">
+              <span className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold text-white shrink-0"
+                style={{ background: '#2e86c1' }}>N</span>
+              <span className="min-w-0">
+                <span className="block text-sm font-semibold text-white truncate">Natthawut</span>
+                <span className="block text-[10px] text-blue-400">Administrator</span>
+                <span className={`mt-1 flex items-center gap-1.5 text-[10px] font-semibold ${currentPage === PAGES.BACKUP ? 'text-white' : 'text-blue-300'}`}>
+                  <IconCopy /> สำรองและกู้คืน
+                </span>
+              </span>
+            </button>
             <button type="button" onClick={() => setSidebarOpen(false)} aria-label="ปิดเมนูหลัก"
               className="ml-auto rounded-lg p-2 text-blue-300 hover:bg-white/10 hover:text-white focus:outline-none lg:hidden">
               <span aria-hidden="true" className="text-xl leading-none">×</span>
