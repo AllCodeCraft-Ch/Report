@@ -509,7 +509,7 @@ function Layout({ currentPage, setCurrentPage, onLogout, user }) {
           {currentPage === PAGES.MEDIA    && <MediaPage />}
           {currentPage === PAGES.SYSTEM   && <SystemPage />}
           {currentPage === PAGES.BACKUP   && <BackupPage />}
-          {currentPage === PAGES.FINANCE  && <PersonalFinancePage ownerId={user?.id} email={user?.email} />}
+          {currentPage === PAGES.FINANCE  && <PersonalFinancePage ownerId={user?.id} />}
           {currentPage === PAGES.TRIPS    && <ProvincialTripsPage />}
         </main>
       </div>
@@ -763,48 +763,6 @@ function PasswordRecoveryPage({ onComplete }) {
           </button>
         </form>
         <p className="pb-5 text-center text-[10px] text-slate-400">© 2026 Daily Report System</p>
-      </div>
-    </div>
-  );
-}
-
-function FinancePinRecoveryPage({ onComplete }) {
-  const [pin, setPin] = useState('');
-  const [confirmPin, setConfirmPin] = useState('');
-  const [error, setError] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-
-  const handleSubmit = async (event) => {
-    event.preventDefault();
-    setError('');
-    if (!/^\d{6}$/.test(pin)) { setError('PIN ต้องเป็นตัวเลข 6 หลัก'); return; }
-    if (pin !== confirmPin) { setError('PIN ทั้งสองช่องไม่ตรงกัน'); return; }
-    setSubmitting(true);
-    try {
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
-      if (userError || user?.app_metadata?.role !== 'admin') throw new Error('verified recovery session missing');
-      const saltBytes = crypto.getRandomValues(new Uint8Array(16));
-      const salt = btoa(String.fromCharCode(...saltBytes));
-      const hash = await deriveFinancePinHash(pin, salt);
-      localStorage.setItem(`daily-report.finance-pin.v1.${user.id}`, JSON.stringify({ salt, hash }));
-      localStorage.removeItem('daily-report.finance-pin-reset-pending');
-      window.history.replaceState({}, document.title, window.location.pathname);
-      onComplete?.(user);
-    } catch {
-      setError('ตั้ง PIN ใหม่ไม่สำเร็จ กรุณาขอลิงก์จากอีเมลอีกครั้ง');
-    } finally { setSubmitting(false); }
-  };
-
-  return (
-    <div className="no-print flex min-h-screen items-center justify-center px-4" style={{ background: 'linear-gradient(135deg,#111d28 0%,#1b3141 60%,#24465b 100%)' }}>
-      <div className="w-full max-w-sm overflow-hidden rounded-2xl bg-white shadow-2xl">
-        <div className="px-8 py-7 text-center" style={{ background: '#1c2b38' }}><h1 className="text-xl font-bold text-white">ตั้ง PIN รายการเงินใหม่</h1><p className="mt-1 text-xs text-blue-300">ยืนยันผ่านอีเมลแล้ว · Daily Report</p></div>
-        <form onSubmit={handleSubmit} className="space-y-4 px-8 py-7">
-          <label className="block"><span className="mb-1 block text-xs font-semibold text-slate-600">PIN ใหม่ 6 หลัก</span><input type="password" value={pin} onChange={(event) => setPin(event.target.value.replace(/\D/g, '').slice(0, 6))} inputMode="numeric" autoComplete="new-password" pattern="[0-9]{6}" maxLength={6} required className="w-full rounded-lg border border-gray-200 bg-slate-50 px-3 py-3 text-lg tracking-[.3em]" /></label>
-          <label className="block"><span className="mb-1 block text-xs font-semibold text-slate-600">ยืนยัน PIN ใหม่</span><input type="password" value={confirmPin} onChange={(event) => setConfirmPin(event.target.value.replace(/\D/g, '').slice(0, 6))} inputMode="numeric" autoComplete="new-password" pattern="[0-9]{6}" maxLength={6} required className="w-full rounded-lg border border-gray-200 bg-slate-50 px-3 py-3 text-lg tracking-[.3em]" /></label>
-          {error && <p role="alert" className="text-sm text-rose-700">{error}</p>}
-          <button type="submit" disabled={submitting || pin.length !== 6 || confirmPin.length !== 6} className="w-full rounded-lg py-3 text-sm font-semibold text-white disabled:opacity-60" style={{ background: 'linear-gradient(90deg,#1e3a5f,#2e86c1)' }}>{submitting ? 'กำลังตั้ง PIN…' : 'บันทึก PIN ใหม่'}</button>
-        </form>
       </div>
     </div>
   );
@@ -4549,33 +4507,10 @@ function SystemPage() {
   );
 }
 
-async function deriveFinancePinHash(pin, salt) {
-  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(pin), 'PBKDF2', false, ['deriveBits']);
-  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: Uint8Array.from(atob(salt), (char) => char.charCodeAt(0)), iterations: 150000, hash: 'SHA-256' }, key, 256);
-  return Array.from(new Uint8Array(bits), (byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-function hasPendingFinancePinReset() {
-  try {
-    const requestedAt = Number(localStorage.getItem('daily-report.finance-pin-reset-pending'));
-    return requestedAt > 0 && Date.now() - requestedAt < 30 * 60 * 1000;
-  } catch { return false; }
-}
-
-function isFinancePinResetReturn() {
-  const params = new URLSearchParams(window.location.search);
-  const hash = new URLSearchParams(window.location.hash.slice(1));
-  const hasAuthCallback = params.has('code') || hash.has('type') || hash.has('access_token');
-  return params.get('financePinReset') === '1' || (hasPendingFinancePinReset() && hasAuthCallback);
-}
-
-function PersonalFinancePage({ ownerId, email }) {
-  const [pinMode, setPinMode] = useState('checking');
+function PersonalFinancePage({ ownerId }) {
+  const [pinMode, setPinMode] = useState('locked');
   const [pinError, setPinError] = useState('');
   const [pinCode, setPinCode] = useState('');
-  const [pinBusy, setPinBusy] = useState(false);
-  const [pinResetBusy, setPinResetBusy] = useState(false);
-  const [pinResetNotice, setPinResetNotice] = useState('');
   const [records, setRecords] = useState([]);
   const [recordsLoading, setRecordsLoading] = useState(true);
   const [recordError, setRecordError] = useState('');
@@ -4585,14 +4520,6 @@ function PersonalFinancePage({ ownerId, email }) {
   const [detail, setDetail] = useState('');
   const [savingId, setSavingId] = useState('');
   const [editingId, setEditingId] = useState('');
-
-  useEffect(() => {
-    setPinCode(''); setPinError('');
-    if (!ownerId) { setPinMode('error'); setPinError('ไม่พบผู้ใช้ที่เข้าสู่ระบบ'); return; }
-    try {
-      setPinMode(localStorage.getItem(`daily-report.finance-pin.v1.${ownerId}`) ? 'locked' : 'setup');
-    } catch { setPinMode('error'); setPinError('เปิดที่เก็บ PIN ในเบราว์เซอร์ไม่ได้'); }
-  }, [ownerId]);
 
   useEffect(() => {
     let active = true;
@@ -4618,44 +4545,18 @@ function PersonalFinancePage({ ownerId, email }) {
     return () => { active = false; };
   }, [pinMode, ownerId]);
 
-  const submitPin = async (event) => {
+  const submitPin = (event) => {
     event.preventDefault();
     const pin = pinCode.trim();
-    if (!/^\d{6}$/.test(pin)) { setPinError('ตั้ง PIN เป็นตัวเลข 6 หลัก'); return; }
-    setPinBusy(true); setPinError('');
-    try {
-      const key = `daily-report.finance-pin.v1.${ownerId}`;
-      if (pinMode === 'setup') {
-        const saltBytes = crypto.getRandomValues(new Uint8Array(16));
-        const salt = btoa(String.fromCharCode(...saltBytes));
-        const hash = await deriveFinancePinHash(pin, salt);
-        localStorage.setItem(key, JSON.stringify({ salt, hash }));
-        setPinMode('open');
-      } else {
-        const saved = JSON.parse(localStorage.getItem(key) || 'null');
-        const hash = saved?.salt && saved?.hash ? await deriveFinancePinHash(pin, saved.salt) : '';
-        if (!hash || hash !== saved.hash) throw new Error('PIN mismatch');
-        setPinMode('open');
-      }
+    if (!/^\d{6}$/.test(pin)) { setPinError('กรอกรหัสตัวเลข 6 หลัก'); return; }
+    setPinError('');
+    if (pin === '101268') {
+      setPinMode('open');
       setPinCode('');
-    } catch {
-      setPinError(pinMode === 'setup' ? 'ตั้ง PIN ไม่สำเร็จ กรุณาลองใหม่' : 'PIN ไม่ถูกต้อง หรือไม่พบ PIN ที่ตั้งไว้');
-    } finally { setPinBusy(false); }
-  };
-
-  const requestFinancePinReset = async () => {
-    setPinError(''); setPinResetNotice('');
-    if (!email || !supabase) { setPinError('ไม่พบอีเมลบัญชีที่เข้าสู่ระบบ'); return; }
-    setPinResetBusy(true);
-    try {
-      localStorage.setItem('daily-report.finance-pin-reset-pending', String(Date.now()));
-      const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
-      if (resetError) throw resetError;
-      setPinResetNotice('ส่งลิงก์ยืนยันไปยังอีเมลบัญชีแล้ว เปิดลิงก์ในอีเมลเพื่อตั้ง PIN ใหม่');
-    } catch {
-      try { localStorage.removeItem('daily-report.finance-pin-reset-pending'); } catch { /* Ignore storage cleanup failure. */ }
-      setPinError('ส่งลิงก์ไม่สำเร็จ กรุณาลองอีกครั้ง');
-    } finally { setPinResetBusy(false); }
+    } else {
+      setPinError('รหัสไม่ถูกต้อง');
+      setPinCode('');
+    }
   };
 
   const saveRecord = async (event) => {
@@ -4698,17 +4599,13 @@ function PersonalFinancePage({ ownerId, email }) {
 
   if (pinMode !== 'open') return (
     <div className="mx-auto max-w-xl space-y-4 rounded-2xl border border-slate-700 bg-slate-900 p-5 text-white shadow-sm sm:p-7">
-      <div><p className="text-xs font-semibold uppercase tracking-[.18em] text-cyan-300">รายการเงิน</p><h1 className="mt-1 text-xl font-bold">{pinMode === 'setup' ? 'ตั้ง PIN 6 หลัก' : 'ใส่ PIN 6 หลัก'}</h1><p className="mt-1 text-sm text-slate-400">{pinMode === 'setup' ? 'กำหนด PIN ตัวเลขที่คุณต้องการเพื่อเปิดหน้านี้บนอุปกรณ์นี้' : 'ใช้ PIN ที่ตั้งไว้บนอุปกรณ์นี้'}</p></div>
-      {pinMode === 'checking' && <p className="text-sm text-slate-300">กำลังตรวจสอบ PIN…</p>}
-      {pinMode === 'error' && <p role="alert" className="text-sm text-rose-300">{pinError}</p>}
-      {(pinMode === 'setup' || pinMode === 'locked') && <form onSubmit={submitPin} className="space-y-4">
+      <div><p className="text-xs font-semibold uppercase tracking-[.18em] text-cyan-300">รายการเงิน</p><h1 className="mt-1 text-xl font-bold">ใส่ PIN 6 หลัก</h1><p className="mt-1 text-sm text-slate-400">กรอกรหัสเดียวกันเพื่อเข้าใช้งานได้ทุกอุปกรณ์</p></div>
+      {pinMode === 'locked' && <form onSubmit={submitPin} className="space-y-4">
         <label className="block"><span className="mb-1 block text-xs font-semibold text-slate-300">PIN ตัวเลข 6 หลัก</span><input type="password" value={pinCode} onChange={(event) => setPinCode(event.target.value.replace(/\D/g, '').slice(0, 6))} inputMode="numeric" autoComplete="new-password" pattern="[0-9]{6}" maxLength={6} required className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-lg tracking-[.3em] text-white" /></label>
         {pinError && <p role="alert" className="text-sm text-rose-300">{pinError}</p>}
-        <button type="submit" disabled={pinBusy || pinCode.length !== 6} className="min-h-11 w-full rounded-xl bg-blue-600 px-4 text-sm font-bold text-white disabled:opacity-60">{pinBusy ? 'กำลังตรวจสอบ…' : pinMode === 'setup' ? 'ตั้ง PIN และเปิดหน้า' : 'เข้าใช้งาน'}</button>
-        {pinMode === 'locked' && <button type="button" onClick={requestFinancePinReset} disabled={pinResetBusy} className="min-h-10 w-full rounded-xl border border-slate-600 px-4 text-sm text-slate-300 disabled:opacity-60">{pinResetBusy ? 'กำลังส่งอีเมล…' : 'ลืม PIN? ส่งลิงก์ตั้งใหม่ทางอีเมล'}</button>}
-        {pinResetNotice && <p role="status" className="text-sm text-emerald-300">{pinResetNotice}</p>}
+        <button type="submit" disabled={pinCode.length !== 6} className="min-h-11 w-full rounded-xl bg-blue-600 px-4 text-sm font-bold text-white disabled:opacity-60">เข้าใช้งาน</button>
       </form>}
-      <p className="text-xs leading-5 text-slate-500">PIN นี้เป็นด่านเปิดหน้าบนอุปกรณ์นี้เท่านั้น การเข้าสู่ระบบและสิทธิ์เจ้าของข้อมูลในฐานข้อมูลยังคงใช้ Supabase Auth และ RLS</p>
+      <p className="text-xs leading-5 text-slate-500">ใช้รหัสเดียวกันได้ทุกอุปกรณ์ การเข้าสู่ระบบและสิทธิ์เข้าถึงข้อมูลยังคงตรวจด้วย Supabase Auth และ RLS</p>
     </div>
   );
 
@@ -4904,7 +4801,7 @@ export default function App() {
   });
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
-  const [recoveryPending, setRecoveryPending] = useState(() => new URLSearchParams(window.location.hash.slice(1)).get('type') === 'recovery' || (hasPendingFinancePinReset() && new URLSearchParams(window.location.search).has('code')));
+  const [recoveryPending, setRecoveryPending] = useState(() => new URLSearchParams(window.location.hash.slice(1)).get('type') === 'recovery');
   const [authLoading, setAuthLoading] = useState(Boolean(supabase));
 
   useEffect(() => {
@@ -4916,7 +4813,7 @@ export default function App() {
     let active = true;
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (!active) return;
-      if (event === 'PASSWORD_RECOVERY' || isFinancePinResetReturn()) setRecoveryPending(true);
+      if (event === 'PASSWORD_RECOVERY') setRecoveryPending(true);
       if (event === 'INITIAL_SESSION') return;
       const isAdmin = session?.user?.app_metadata?.role === 'admin';
       setCurrentUser(isAdmin ? session.user : null);
@@ -4957,11 +4854,6 @@ export default function App() {
     setIsAuthenticated(true);
   };
 
-  const handleFinancePinResetComplete = (user) => {
-    handlePasswordUpdated(user);
-    setCurrentPage(PAGES.FINANCE);
-  };
-
   useEffect(() => {
     try {
       window.sessionStorage.setItem('daily-report-current-page', currentPage);
@@ -4982,9 +4874,6 @@ export default function App() {
   }
 
   if (recoveryPending) {
-    if (isFinancePinResetReturn()) {
-      return <><FinancePinRecoveryPage onComplete={handleFinancePinResetComplete} /><AppDialogLayer /></>;
-    }
     return <><PasswordRecoveryPage onComplete={handlePasswordUpdated} /><AppDialogLayer /></>;
   }
 
