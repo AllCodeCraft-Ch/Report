@@ -21,7 +21,7 @@ The Hosting configuration adds a restrictive Content Security Policy, clickjacki
 
 ## Personal Finance
 
-Apply `migrations/202611250001_personal_finance_owner_encryption.sql` and `migrations/20261125114345_simplify_personal_finance.sql` before releasing the simplified page. New rows store the amount in integer satang, the creation timestamp, and the user-entered detail. The page asks for a six-digit TOTP code, and the table remains owner-only under RLS. Finance values are stored as regular database fields rather than client-side encrypted payloads. Date and month summaries are calculated in the browser using Asia/Bangkok. Receipt scanning and the separate encryption vault are not part of the page.
+Apply `migrations/202611250001_personal_finance_owner_encryption.sql`, `migrations/20261125114345_simplify_personal_finance.sql`, and `migrations/20261125115730_remove_personal_finance_mfa_gate.sql` before releasing the simplified page. New rows store the amount in integer satang, the creation timestamp, and the user-entered detail. A user-set six-digit PIN is stored on the current device as a salted PBKDF2 hash and acts only as a page-entry prompt; Supabase Auth and owner-only RLS remain the actual database access controls. Finance values are stored as regular database fields rather than client-side encrypted payloads. Date and month summaries are calculated in the browser using Asia/Bangkok. Receipt scanning and the separate encryption vault are not part of the page.
 
 Cloudflare Pages uses `public/_headers` and `public/_redirects`; the existing Firebase Hosting configuration remains separate. Deploy the chosen hosting target after the migration is applied.
 

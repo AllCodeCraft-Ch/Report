@@ -4507,15 +4507,17 @@ function SystemPage() {
   );
 }
 
+async function deriveFinancePinHash(pin, salt) {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(pin), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: Uint8Array.from(atob(salt), (char) => char.charCodeAt(0)), iterations: 150000, hash: 'SHA-256' }, key, 256);
+  return Array.from(new Uint8Array(bits), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 function PersonalFinancePage({ ownerId }) {
-  const [mfaMode, setMfaMode] = useState('checking');
-  const [mfaError, setMfaError] = useState('');
-  const [mfaFactorId, setMfaFactorId] = useState('');
-  const [mfaSecret, setMfaSecret] = useState('');
-  const [mfaQr, setMfaQr] = useState('');
-  const [mfaCode, setMfaCode] = useState('');
-  const [mfaBusy, setMfaBusy] = useState(false);
-  const [mfaRetry, setMfaRetry] = useState(0);
+  const [pinMode, setPinMode] = useState('checking');
+  const [pinError, setPinError] = useState('');
+  const [pinCode, setPinCode] = useState('');
+  const [pinBusy, setPinBusy] = useState(false);
   const [records, setRecords] = useState([]);
   const [recordsLoading, setRecordsLoading] = useState(true);
   const [recordError, setRecordError] = useState('');
@@ -4527,37 +4529,17 @@ function PersonalFinancePage({ ownerId }) {
   const [editingId, setEditingId] = useState('');
 
   useEffect(() => {
-    let active = true;
-    async function prepareMfa() {
-      setMfaMode('checking'); setMfaError(''); setMfaSecret(''); setMfaQr(''); setMfaFactorId('');
-      if (!supabase || !ownerId) { setMfaMode('error'); setMfaError('ไม่พบผู้ใช้ที่เข้าสู่ระบบ'); return; }
-      try {
-        const { data: factorData, error: factorsError } = await supabase.auth.mfa.listFactors();
-        if (factorsError) throw factorsError;
-        const verifiedFactor = (factorData?.totp || []).find((factor) => factor.status === 'verified');
-        if (verifiedFactor) {
-          if (active) { setMfaFactorId(verifiedFactor.id); setMfaMode('challenge'); }
-          return;
-        }
-        for (const incompleteFactor of (factorData?.totp || []).filter((factor) => factor.status === 'unverified')) {
-          const { error: cleanupError } = await supabase.auth.mfa.unenroll({ factorId: incompleteFactor.id });
-          if (cleanupError) throw cleanupError;
-        }
-        const { data: enrolled, error: enrollError } = await supabase.auth.mfa.enroll({ factorType: 'totp', friendlyName: 'รายการเงิน' });
-        if (enrollError) throw enrollError;
-        if (active) { setMfaFactorId(enrolled.id); setMfaSecret(enrolled.totp?.secret || ''); setMfaQr(enrolled.totp?.qr_code || ''); setMfaMode('enroll'); }
-      } catch {
-        if (active) { setMfaMode('error'); setMfaError('ตั้งค่า MFA ไม่สำเร็จ ตรวจการตั้งค่า Supabase Auth แล้วลองอีกครั้ง'); }
-      }
-    }
-    prepareMfa();
-    return () => { active = false; };
-  }, [ownerId, mfaRetry]);
+    setPinCode(''); setPinError('');
+    if (!ownerId) { setPinMode('error'); setPinError('ไม่พบผู้ใช้ที่เข้าสู่ระบบ'); return; }
+    try {
+      setPinMode(localStorage.getItem(`daily-report.finance-pin.v1.${ownerId}`) ? 'locked' : 'setup');
+    } catch { setPinMode('error'); setPinError('เปิดที่เก็บ PIN ในเบราว์เซอร์ไม่ได้'); }
+  }, [ownerId]);
 
   useEffect(() => {
     let active = true;
     async function loadRecords() {
-      if (mfaMode !== 'unlocked' || !ownerId || !supabase) return;
+      if (pinMode !== 'open' || !ownerId || !supabase) return;
       setRecordsLoading(true); setRecordError('');
       const { data, error: queryError } = await supabase.from('personal_finance').select('id,owner_id,amount_satang,transaction_at,detail').eq('owner_id', ownerId).order('transaction_at', { ascending: false });
       if (!active) return;
@@ -4576,23 +4558,36 @@ function PersonalFinancePage({ ownerId }) {
     }
     loadRecords().catch(() => { if (active) { setRecordError('โหลดรายการไม่สำเร็จ กรุณาลองอีกครั้ง'); setRecordsLoading(false); } });
     return () => { active = false; };
-  }, [mfaMode, ownerId]);
+  }, [pinMode, ownerId]);
 
-  const verifyMfa = async (event) => {
+  const submitPin = async (event) => {
     event.preventDefault();
-    if (!mfaFactorId || !/^\d{6}$/.test(mfaCode.trim())) { setMfaError('กรอกรหัส 6 หลักจากแอป Authenticator'); return; }
-    setMfaBusy(true); setMfaError('');
+    const pin = pinCode.trim();
+    if (!/^\d{6}$/.test(pin)) { setPinError('ตั้ง PIN เป็นตัวเลข 6 หลัก'); return; }
+    setPinBusy(true); setPinError('');
     try {
-      const { data: challenge, error: challengeError } = await supabase.auth.mfa.challenge({ factorId: mfaFactorId });
-      if (challengeError) throw challengeError;
-      const { error: verifyError } = await supabase.auth.mfa.verify({ factorId: mfaFactorId, challengeId: challenge.id, code: mfaCode.trim() });
-      if (verifyError) throw verifyError;
-      const { data: assurance, error: assuranceError } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
-      if (assuranceError || assurance?.currentLevel !== 'aal2') throw new Error('MFA level not reached');
-      setMfaCode(''); setMfaSecret(''); setMfaQr(''); setMfaMode('unlocked');
+      const key = `daily-report.finance-pin.v1.${ownerId}`;
+      if (pinMode === 'setup') {
+        const saltBytes = crypto.getRandomValues(new Uint8Array(16));
+        const salt = btoa(String.fromCharCode(...saltBytes));
+        const hash = await deriveFinancePinHash(pin, salt);
+        localStorage.setItem(key, JSON.stringify({ salt, hash }));
+        setPinMode('open');
+      } else {
+        const saved = JSON.parse(localStorage.getItem(key) || 'null');
+        const hash = saved?.salt && saved?.hash ? await deriveFinancePinHash(pin, saved.salt) : '';
+        if (!hash || hash !== saved.hash) throw new Error('PIN mismatch');
+        setPinMode('open');
+      }
+      setPinCode('');
     } catch {
-      setMfaError('ยืนยัน MFA ไม่สำเร็จ ตรวจรหัสแล้วลองใหม่');
-    } finally { setMfaBusy(false); }
+      setPinError(pinMode === 'setup' ? 'ตั้ง PIN ไม่สำเร็จ กรุณาลองใหม่' : 'PIN ไม่ถูกต้อง หรือไม่พบ PIN ที่ตั้งไว้');
+    } finally { setPinBusy(false); }
+  };
+
+  const resetFinancePin = () => {
+    try { localStorage.removeItem(`daily-report.finance-pin.v1.${ownerId}`); setPinCode(''); setPinError(''); setPinMode('setup'); }
+    catch { setPinError('เปลี่ยน PIN ไม่สำเร็จ'); }
   };
 
   const saveRecord = async (event) => {
@@ -4633,17 +4628,18 @@ function PersonalFinancePage({ ownerId }) {
   const dayRecords = records.filter((record) => dateKey(record.transactionAt) === selectedDate);
   const sumAmount = (list) => list.reduce((sum, record) => sum + BigInt(record.amountSatang), 0n);
 
-  if (mfaMode !== 'unlocked') return (
+  if (pinMode !== 'open') return (
     <div className="mx-auto max-w-xl space-y-4 rounded-2xl border border-slate-700 bg-slate-900 p-5 text-white shadow-sm sm:p-7">
-      <div><p className="text-xs font-semibold uppercase tracking-[.18em] text-cyan-300">รายการเงิน</p><h1 className="mt-1 text-xl font-bold">กรอกรหัส 6 หลัก</h1><p className="mt-1 text-sm text-slate-400">ใช้รหัสจากแอป Authenticator เพื่อเข้าหน้านี้</p></div>
-      {mfaMode === 'checking' && <p className="text-sm text-slate-300">กำลังตรวจสอบการยืนยันตัวตน…</p>}
-      {mfaMode === 'error' && <div className="space-y-3"><p role="alert" className="text-sm text-rose-300">{mfaError}</p><button type="button" onClick={() => setMfaRetry((value) => value + 1)} className="min-h-10 rounded-xl border border-slate-600 px-4 text-sm font-semibold">ลองอีกครั้ง</button></div>}
-      {(mfaMode === 'enroll' || mfaMode === 'challenge') && <form onSubmit={verifyMfa} className="space-y-4">
-        {mfaMode === 'enroll' ? <div className="rounded-xl border border-slate-700 bg-slate-950 p-4"><p className="text-sm font-semibold">เพิ่มบัญชีนี้ในแอป Authenticator</p><p className="mt-1 text-xs leading-5 text-slate-400">สแกน QR บนหน้าจอนี้ หรือป้อนรหัสลับในแอปยืนยันตัวตน ห้ามส่งต่อ QR หรือรหัสลับ</p>{mfaQr && <img src={mfaQr} alt="QR สำหรับตั้งค่า MFA ชั่วคราว" className="mx-auto mt-3 h-40 w-40 rounded-lg bg-white p-2" /> }<p className="mt-3 select-all break-all rounded-lg bg-slate-900 px-3 py-2 font-mono text-sm tracking-widest text-cyan-200">{mfaSecret || 'กำลังเตรียมรหัสลับ…'}</p></div> : <p className="text-sm text-slate-300">กรอกรหัส 6 หลักจากแอป Authenticator ที่ลงทะเบียนไว้</p>}
-        <label className="block"><span className="mb-1 block text-xs font-semibold text-slate-300">รหัส 6 หลัก</span><input value={mfaCode} onChange={(event) => setMfaCode(event.target.value.replace(/\D/g, '').slice(0, 6))} inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-lg tracking-[.3em] text-white" /></label>
-        {mfaError && <p role="alert" className="text-sm text-rose-300">{mfaError}</p>}
-        <button type="submit" disabled={mfaBusy || !mfaFactorId} className="min-h-11 w-full rounded-xl bg-blue-600 px-4 text-sm font-bold text-white disabled:opacity-60">{mfaBusy ? 'กำลังยืนยัน…' : 'ยืนยันและเปิดรายการเงิน'}</button>
+      <div><p className="text-xs font-semibold uppercase tracking-[.18em] text-cyan-300">รายการเงิน</p><h1 className="mt-1 text-xl font-bold">{pinMode === 'setup' ? 'ตั้ง PIN 6 หลัก' : 'ใส่ PIN 6 หลัก'}</h1><p className="mt-1 text-sm text-slate-400">{pinMode === 'setup' ? 'กำหนด PIN ตัวเลขที่คุณต้องการเพื่อเปิดหน้านี้บนอุปกรณ์นี้' : 'ใช้ PIN ที่ตั้งไว้บนอุปกรณ์นี้'}</p></div>
+      {pinMode === 'checking' && <p className="text-sm text-slate-300">กำลังตรวจสอบ PIN…</p>}
+      {pinMode === 'error' && <p role="alert" className="text-sm text-rose-300">{pinError}</p>}
+      {(pinMode === 'setup' || pinMode === 'locked') && <form onSubmit={submitPin} className="space-y-4">
+        <label className="block"><span className="mb-1 block text-xs font-semibold text-slate-300">PIN ตัวเลข 6 หลัก</span><input value={pinCode} onChange={(event) => setPinCode(event.target.value.replace(/\D/g, '').slice(0, 6))} inputMode="numeric" autoComplete="new-password" pattern="[0-9]{6}" maxLength={6} required className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-lg tracking-[.3em] text-white" /></label>
+        {pinError && <p role="alert" className="text-sm text-rose-300">{pinError}</p>}
+        <button type="submit" disabled={pinBusy || pinCode.length !== 6} className="min-h-11 w-full rounded-xl bg-blue-600 px-4 text-sm font-bold text-white disabled:opacity-60">{pinBusy ? 'กำลังตรวจสอบ…' : pinMode === 'setup' ? 'ตั้ง PIN และเปิดหน้า' : 'เข้าใช้งาน'}</button>
+        {pinMode === 'locked' && <button type="button" onClick={resetFinancePin} className="min-h-10 w-full rounded-xl border border-slate-600 px-4 text-sm text-slate-300">ลืม PIN? ตั้งใหม่บนอุปกรณ์นี้</button>}
       </form>}
+      <p className="text-xs leading-5 text-slate-500">PIN นี้เป็นด่านเปิดหน้าบนอุปกรณ์นี้เท่านั้น การเข้าสู่ระบบและสิทธิ์เจ้าของข้อมูลในฐานข้อมูลยังคงใช้ Supabase Auth และ RLS</p>
     </div>
   );
 
