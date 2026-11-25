@@ -1,0 +1,14 @@
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Strict-Transport-Security: max-age=31536000
+  X-Frame-Options: DENY
+  X-Permitted-Cross-Domain-Policies: none
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
+  Content-Security-Policy: default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https://ltuovhnydmissxwphwqh.supabase.co; media-src 'self' blob: https://ltuovhnydmissxwphwqh.supabase.co; connect-src 'self' https://ltuovhnydmissxwphwqh.supabase.co wss://ltuovhnydmissxwphwqh.supabase.co; worker-src 'self' blob:; upgrade-insecure-requests
+
+/index.html
+  Cache-Control: no-store, max-age=0
+
+/
+  Cache-Control: no-store, max-age=0
