@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { supabase, supabaseDiagnostics } from './supabaseClient.js';
-import { parseFinanceOcr, formatFinanceAmount, parseFinanceAmount, deriveFinanceKey, encryptFinanceRecord, decryptFinanceRecord } from './personalFinance.js';
+import { parseFinanceOcr, prepareFinanceOcrImage, formatFinanceAmount, parseFinanceAmount, deriveFinanceKey, encryptFinanceRecord, decryptFinanceRecord } from './personalFinance.js';
 
 const PAGES = {
   DASHBOARD: 'dashboard',
@@ -225,7 +225,7 @@ const NAV_ITEMS = [
   { page: PAGES.TRIPS,    label: 'ออกต่างจังหวัด', Icon: IconPlane },
   { page: PAGES.SYSTEM,   label: 'ระบบ',             Icon: IconSettings },
   { page: PAGES.BACKUP,   label: 'สำรองและกู้คืน',   Icon: IconCopy },
-  { page: PAGES.FINANCE,  label: 'Personal Finance', Icon: IconSettings },
+  { page: PAGES.FINANCE,  label: 'รายการเงิน', Icon: IconSettings },
 ];
 
 function parseSheetTable(rawText) {
@@ -4570,7 +4570,7 @@ function PersonalFinancePage({ ownerId }) {
           const { error: cleanupError } = await supabase.auth.mfa.unenroll({ factorId: incompleteFactor.id });
           if (cleanupError) throw cleanupError;
         }
-        const { data: enrolled, error: enrollError } = await supabase.auth.mfa.enroll({ factorType: 'totp', friendlyName: 'Personal Finance' });
+        const { data: enrolled, error: enrollError } = await supabase.auth.mfa.enroll({ factorType: 'totp', friendlyName: 'รายการเงิน' });
         if (enrollError) throw enrollError;
         if (active) { setMfaFactorId(enrolled.id); setMfaSecret(enrolled.totp?.secret || ''); setMfaQr(enrolled.totp?.qr_code || ''); setMfaMode('enroll'); }
       } catch {
@@ -4590,7 +4590,7 @@ function PersonalFinancePage({ ownerId }) {
       if (!active) return;
       if (queryError) {
         setVaultMode('error');
-        setVaultError('เปิดคลังไม่ได้ ตรวจสอบว่า migration Personal Finance ถูกนำไปใช้และสิทธิ์ owner-only RLS พร้อมแล้ว');
+        setVaultError('เปิดคลังไม่ได้ ตรวจสอบว่า migration รายการเงินถูกนำไปใช้และสิทธิ์ owner-only RLS พร้อมแล้ว');
         return;
       }
       const rows = data || [];
@@ -4637,8 +4637,10 @@ function PersonalFinancePage({ ownerId }) {
   const handleOcr = async () => {
     const files = Array.from(inputRef.current?.files || []);
     if (!files.length || files.length > 10 || ocrBusy) return;
-    if (files.some((file) => !['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 20 * 1024 * 1024)) {
-      setRecordError('รองรับเฉพาะรูป JPEG, PNG หรือ WebP ขนาดไม่เกิน 20 MB ต่อรูป');
+    const supportedImageType = (file) => /^(image\/(jpeg|png|webp|heic|heif|bmp|tiff|x-tiff))$/i.test(file.type)
+      || (!file.type && /\.(jpe?g|png|webp|heic|heif|bmp|tiff?)$/i.test(file.name));
+    if (files.some((file) => !supportedImageType(file) || file.size > 20 * 1024 * 1024)) {
+      setRecordError('เลือกไฟล์รูปภาพขนาดไม่เกิน 20 MB ต่อรูป (รองรับ JPEG, PNG, WebP และ HEIC ตามความสามารถของ Browser)');
       if (inputRef.current) inputRef.current.value = '';
       setFileCount(0);
       return;
@@ -4663,28 +4665,35 @@ function PersonalFinancePage({ ownerId }) {
         },
       });
       workerRef.current = worker;
+      let failedCount = 0;
+      let fieldsFound = 0;
       for (let index = 0; index < files.length; index += 1) {
         if (cancelOcrRef.current) break;
         currentIndexRef.current = index;
         setOcrStatus(`อ่านสลิป ${index + 1} จาก ${files.length}`);
         let rawText = '';
         let recognition = null;
+        let preparedImage = null;
         try {
-          recognition = await worker.recognize(files[index]);
+          preparedImage = await prepareFinanceOcrImage(files[index]);
+          recognition = await worker.recognize(preparedImage);
           rawText = recognition?.data?.text || '';
           const parsed = parseFinanceOcr(rawText);
+          fieldsFound += Number(Boolean(parsed.amountSatang)) + Number(Boolean(parsed.date)) + Number(Boolean(parsed.time));
           results.push({ draftId: crypto.randomUUID(), amount: parsed.amountSatang ? formatFinanceAmount(parsed.amountSatang) : '', date: parsed.date, time: parsed.time, detail: '', source: 'ocr' });
         } catch {
+          failedCount += 1;
           results.push({ draftId: crypto.randomUUID(), amount: '', date: '', time: '', detail: '', source: 'manual' });
         } finally {
           rawText = '';
           recognition = null;
+          preparedImage = null;
           setOcrProgress(Math.round(((index + 1) / files.length) * 100));
         }
       }
       if (aliveRef.current && !cancelOcrRef.current) {
         setDrafts((current) => [...current, ...results]);
-        setOcrStatus(`อ่านเสร็จ ${results.length} จาก ${files.length} รูป · ตรวจสอบและกรอกรายละเอียดก่อนบันทึก`);
+        setOcrStatus(`อ่านเสร็จ ${results.length} จาก ${files.length} รูป · พบข้อมูล ${fieldsFound} ช่อง${failedCount ? ` · อ่านภาพไม่สำเร็จ ${failedCount} รูป` : ''} · ตรวจสอบและกรอกรายละเอียดก่อนบันทึก`);
       } else if (aliveRef.current) setOcrStatus(`ยกเลิกแล้ว · อ่านได้ ${results.length} รูป`);
     } catch {
       if (aliveRef.current) setRecordError('เปิดตัวอ่าน OCR ในเครื่องไม่สำเร็จ ตรวจว่าไฟล์ OCR ภาษาไทย/อังกฤษอยู่บนเว็บครบถ้วน');
@@ -4749,23 +4758,23 @@ function PersonalFinancePage({ ownerId }) {
 
   if (mfaMode !== 'unlocked') return (
     <div className="mx-auto max-w-xl space-y-4 rounded-2xl border border-slate-700 bg-slate-900 p-5 text-white shadow-sm sm:p-7">
-      <div><p className="text-xs font-semibold uppercase tracking-[.18em] text-cyan-300">Personal Finance · MFA</p><h1 className="mt-1 text-xl font-bold">ยืนยันตัวตนหลายขั้นตอน</h1><p className="mt-1 text-sm text-slate-400">ข้อมูลการเงินต้องใช้ TOTP และสิทธิ์ระดับ AAL2 ก่อนเปิดคลัง</p></div>
+      <div><p className="text-xs font-semibold uppercase tracking-[.18em] text-cyan-300">รายการเงิน · MFA</p><h1 className="mt-1 text-xl font-bold">ยืนยันตัวตนหลายขั้นตอน</h1><p className="mt-1 text-sm text-slate-400">ข้อมูลการเงินต้องใช้ TOTP และสิทธิ์ระดับ AAL2 ก่อนเปิดคลัง</p></div>
       {mfaMode === 'checking' && <p className="text-sm text-slate-300">กำลังตรวจสอบการยืนยันตัวตน…</p>}
       {mfaMode === 'error' && <div className="space-y-3"><p role="alert" className="text-sm text-rose-300">{mfaError}</p><button type="button" onClick={() => setMfaRetry((value) => value + 1)} className="min-h-10 rounded-xl border border-slate-600 px-4 text-sm font-semibold">ลองอีกครั้ง</button></div>}
       {(mfaMode === 'enroll' || mfaMode === 'challenge') && <form onSubmit={verifyMfa} className="space-y-4">
         {mfaMode === 'enroll' ? <div className="rounded-xl border border-slate-700 bg-slate-950 p-4"><p className="text-sm font-semibold">เพิ่มบัญชีนี้ในแอป Authenticator</p><p className="mt-1 text-xs leading-5 text-slate-400">สแกน QR บนหน้าจอนี้ หรือป้อนรหัสลับในแอปยืนยันตัวตน ห้ามส่งต่อ QR หรือรหัสลับ</p>{mfaQr && <img src={mfaQr} alt="QR สำหรับตั้งค่า MFA ชั่วคราว" className="mx-auto mt-3 h-40 w-40 rounded-lg bg-white p-2" /> }<p className="mt-3 select-all break-all rounded-lg bg-slate-900 px-3 py-2 font-mono text-sm tracking-widest text-cyan-200">{mfaSecret || 'กำลังเตรียมรหัสลับ…'}</p></div> : <p className="text-sm text-slate-300">กรอกรหัส 6 หลักจากแอป Authenticator ที่ลงทะเบียนไว้</p>}
         <label className="block"><span className="mb-1 block text-xs font-semibold text-slate-300">รหัสยืนยัน</span><input value={mfaCode} onChange={(event) => setMfaCode(event.target.value.replace(/\D/g, '').slice(0, 8))} inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6,8}" required className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-lg tracking-[.3em] text-white" /></label>
         {mfaError && <p role="alert" className="text-sm text-rose-300">{mfaError}</p>}
-        <button type="submit" disabled={mfaBusy || !mfaFactorId} className="min-h-11 w-full rounded-xl bg-blue-600 px-4 text-sm font-bold text-white disabled:opacity-60">{mfaBusy ? 'กำลังยืนยัน…' : 'ยืนยันและเปิด Personal Finance'}</button>
+        <button type="submit" disabled={mfaBusy || !mfaFactorId} className="min-h-11 w-full rounded-xl bg-blue-600 px-4 text-sm font-bold text-white disabled:opacity-60">{mfaBusy ? 'กำลังยืนยัน…' : 'ยืนยันและเปิดรายการเงิน'}</button>
       </form>}
     </div>
   );
 
   if (vaultMode === 'loading') return <div className="mx-auto max-w-xl rounded-2xl border border-slate-700 bg-slate-900 p-5 text-sm text-slate-300">กำลังเปิดคลังการเงินแบบเข้ารหัส…</div>;
-  if (vaultMode === 'error') return <div className="mx-auto max-w-xl space-y-3 rounded-2xl border border-slate-700 bg-slate-900 p-5 text-white"><h1 className="text-xl font-bold">Personal Finance</h1><p role="alert" className="text-sm text-rose-300">{vaultError}</p></div>;
+  if (vaultMode === 'error') return <div className="mx-auto max-w-xl space-y-3 rounded-2xl border border-slate-700 bg-slate-900 p-5 text-white"><h1 className="text-xl font-bold">รายการเงิน</h1><p role="alert" className="text-sm text-rose-300">{vaultError}</p></div>;
   if (vaultMode !== 'open') return (
     <div className="mx-auto max-w-xl space-y-4 rounded-2xl border border-slate-700 bg-slate-900 p-5 text-white shadow-sm sm:p-7">
-      <div><p className="text-xs font-semibold uppercase tracking-[.18em] text-cyan-300">Personal Finance · Encrypted Vault</p><h1 className="mt-1 text-xl font-bold">{vaultMode === 'new' ? 'ตั้งรหัสเปิดคลังการเงิน' : 'ปลดล็อกคลังการเงิน'}</h1><p className="mt-1 text-sm text-slate-400">ใช้เฉพาะในหน่วยความจำของ Browser ไม่บันทึกรหัสหรือข้อมูลรายการไว้ใน Local Storage</p></div>
+      <div><p className="text-xs font-semibold uppercase tracking-[.18em] text-cyan-300">รายการเงิน · Encrypted Vault</p><h1 className="mt-1 text-xl font-bold">{vaultMode === 'new' ? 'ตั้งรหัสเปิดคลังการเงิน' : 'ปลดล็อกคลังการเงิน'}</h1><p className="mt-1 text-sm text-slate-400">ใช้เฉพาะในหน่วยความจำของ Browser ไม่บันทึกรหัสหรือข้อมูลรายการไว้ใน Local Storage</p></div>
       <form onSubmit={unlockVault} className="space-y-3">
         <label className="block"><span className="mb-1 block text-xs font-semibold text-slate-300">{vaultMode === 'new' ? 'รหัสคลังใหม่ (อย่างน้อย 12 ตัวอักษร)' : 'รหัสคลัง'}</span><input type="password" value={vaultPassword} onChange={(event) => setVaultPassword(event.target.value)} autoComplete="off" spellCheck="false" minLength={12} required className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-sm text-white" /></label>
         {vaultError && <p role="alert" className="text-sm text-rose-300">{vaultError}</p>}
@@ -4801,11 +4810,11 @@ function PersonalFinancePage({ ownerId }) {
 
   return (
     <div className="mx-auto max-w-5xl space-y-5">
-      <header><p className="text-xs font-semibold uppercase tracking-[.18em] text-cyan-300">Private · Local OCR · Encrypted</p><h1 className="mt-1 text-2xl font-bold text-white">Personal Finance</h1><p className="mt-1 text-sm text-slate-400">อ่านสลิปใน Browser นี้เท่านั้น · บันทึกเฉพาะข้อมูลธุรกรรมที่เข้ารหัส</p></header>
+      <header><p className="text-xs font-semibold uppercase tracking-[.18em] text-cyan-300">ส่วนตัว · อ่านสลิปในเครื่อง · เข้ารหัส</p><h1 className="mt-1 text-2xl font-bold text-white">รายการเงิน</h1><p className="mt-1 text-sm text-slate-400">อ่านสลิปใน Browser นี้เท่านั้น · บันทึกเฉพาะข้อมูลธุรกรรมที่เข้ารหัส</p></header>
       <section className="overflow-hidden rounded-2xl border border-slate-700 bg-slate-900 text-white">
         <div className="border-b border-slate-700 bg-gradient-to-r from-blue-950 to-cyan-950 px-4 py-4 sm:px-5"><h2 className="text-base font-bold">อ่านสลิปในอุปกรณ์</h2><p className="mt-1 text-xs text-blue-100/80">เลือกได้ 1–10 รูป · OCR ภาษาไทยและอังกฤษทำงานบน Browser · รูปไม่ถูกอัปโหลด</p></div>
         <div className="space-y-3 p-4 sm:p-5">
-          <input ref={inputRef} type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={(event) => setFileCount(event.target.files?.length || 0)} className="block w-full rounded-xl border border-slate-700 bg-slate-950 p-2 text-xs text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-800 file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white" />
+          <input ref={inputRef} type="file" accept="image/*,.heic,.heif" multiple onChange={(event) => setFileCount(event.target.files?.length || 0)} className="block w-full rounded-xl border border-slate-700 bg-slate-950 p-2 text-xs text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-800 file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white" />
           {fileCount > 10 && <p role="alert" className="text-xs text-rose-300">เลือกได้ไม่เกิน 10 รูปต่อครั้ง</p>}
           <div className="flex flex-wrap gap-2"><button type="button" disabled={ocrBusy || !fileCount || fileCount > 10} onClick={handleOcr} className="min-h-10 rounded-xl bg-blue-600 px-4 text-xs font-bold text-white disabled:opacity-50">{ocrBusy ? 'กำลังอ่าน…' : `เริ่มอ่าน ${fileCount || ''} รูป`}</button>{ocrBusy && <button type="button" onClick={cancelOcr} className="min-h-10 rounded-xl border border-slate-600 px-4 text-xs font-semibold text-slate-200">ยกเลิก</button>}<button type="button" disabled={ocrBusy} onClick={addManualDraft} className="min-h-10 rounded-xl border border-slate-600 px-4 text-xs font-semibold text-slate-200 disabled:opacity-50">เพิ่มรายการกรอกเอง</button></div>
           {ocrBusy && <div aria-live="polite"><div className="flex justify-between gap-3 text-xs text-slate-400"><span>{ocrStatus}</span><span>{ocrProgress}%</span></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-800"><div className="h-full rounded-full bg-cyan-400 transition-[width]" style={{ width: `${ocrProgress}%` }} /></div></div>}
