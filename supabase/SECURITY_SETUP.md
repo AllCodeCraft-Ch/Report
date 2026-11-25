@@ -21,8 +21,8 @@ The Hosting configuration adds a restrictive Content Security Policy, clickjacki
 
 ## Personal Finance
 
-Apply `migrations/202611250001_personal_finance_owner_encryption.sql` before opening the page. This table grants access only to the authenticated owner at AAL2; transaction fields are AES-GCM encrypted in the browser, and summaries are calculated after decryption in memory. The encryption passphrase is never uploaded or persisted. Losing it makes those finance records unrecoverable. The page enrolls/challenges TOTP MFA and verifies AAL2; keep TOTP enrollment enabled in Supabase Auth.
+Apply `migrations/202611250001_personal_finance_owner_encryption.sql` and `migrations/20261125114345_simplify_personal_finance.sql` before releasing the simplified page. New rows store the amount in integer satang, the creation timestamp, and the user-entered detail. The page asks for a six-digit TOTP code, and the table remains owner-only under RLS. Finance values are stored as regular database fields rather than client-side encrypted payloads. Date and month summaries are calculated in the browser using Asia/Bangkok. Receipt scanning and the separate encryption vault are not part of the page.
 
-Tesseract.js worker, WebAssembly core, and Thai/English trained data are bundled under `public/ocr/` and served from the same origin. The OCR worker uses `cacheMethod: none`; receipt images are passed directly to the local worker, never uploaded, and no object URLs are created. Cloudflare Pages uses `public/_headers` and `public/_redirects`; the existing Firebase Hosting configuration remains separate. Deploy the chosen hosting target only after checking its response headers and verifying the Supabase migration is applied.
+Cloudflare Pages uses `public/_headers` and `public/_redirects`; the existing Firebase Hosting configuration remains separate. Deploy the chosen hosting target after the migration is applied.
 
 The Firebase Hosting response headers are configured in the repository's `firebase.json`; they take effect only after a Hosting deploy.

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { supabase, supabaseDiagnostics } from './supabaseClient.js';
-import { parseFinanceOcr, prepareFinanceOcrImage, formatFinanceAmount, parseFinanceAmount, deriveFinanceKey, encryptFinanceRecord, decryptFinanceRecord } from './personalFinance.js';
+import { formatFinanceAmount, parseFinanceAmount } from './personalFinance.js';
 
 const PAGES = {
   DASHBOARD: 'dashboard',
@@ -4516,39 +4516,15 @@ function PersonalFinancePage({ ownerId }) {
   const [mfaCode, setMfaCode] = useState('');
   const [mfaBusy, setMfaBusy] = useState(false);
   const [mfaRetry, setMfaRetry] = useState(0);
-  const [vaultMode, setVaultMode] = useState('loading');
-  const [vaultPassword, setVaultPassword] = useState('');
-  const [vaultError, setVaultError] = useState('');
-  const [vaultKey, setVaultKey] = useState(null);
-  const [encryptedRows, setEncryptedRows] = useState([]);
   const [records, setRecords] = useState([]);
-  const [recordsLoading, setRecordsLoading] = useState(false);
+  const [recordsLoading, setRecordsLoading] = useState(true);
   const [recordError, setRecordError] = useState('');
   const [month, setMonth] = useState(bangkokISODate().slice(0, 7));
   const [selectedDate, setSelectedDate] = useState(bangkokISODate());
-  const [fileCount, setFileCount] = useState(0);
-  const [ocrBusy, setOcrBusy] = useState(false);
-  const [ocrProgress, setOcrProgress] = useState(0);
-  const [ocrStatus, setOcrStatus] = useState('');
-  const [drafts, setDrafts] = useState([]);
+  const [amount, setAmount] = useState('');
+  const [detail, setDetail] = useState('');
   const [savingId, setSavingId] = useState('');
   const [editingId, setEditingId] = useState('');
-  const inputRef = useRef(null);
-  const workerRef = useRef(null);
-  const cancelOcrRef = useRef(false);
-  const aliveRef = useRef(true);
-  const currentIndexRef = useRef(0);
-  const editOriginalRef = useRef(null);
-
-  useEffect(() => {
-    aliveRef.current = true;
-    return () => {
-      aliveRef.current = false;
-      cancelOcrRef.current = true;
-      if (workerRef.current) workerRef.current.terminate();
-      workerRef.current = null;
-    };
-  }, []);
 
   useEffect(() => {
     let active = true;
@@ -4556,9 +4532,6 @@ function PersonalFinancePage({ ownerId }) {
       setMfaMode('checking'); setMfaError(''); setMfaSecret(''); setMfaQr(''); setMfaFactorId('');
       if (!supabase || !ownerId) { setMfaMode('error'); setMfaError('ไม่พบผู้ใช้ที่เข้าสู่ระบบ'); return; }
       try {
-        const { data: assurance, error: assuranceError } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
-        if (assuranceError) throw assuranceError;
-        if (assurance?.currentLevel === 'aal2') { if (active) setMfaMode('unlocked'); return; }
         const { data: factorData, error: factorsError } = await supabase.auth.mfa.listFactors();
         if (factorsError) throw factorsError;
         const verifiedFactor = (factorData?.totp || []).find((factor) => factor.status === 'verified');
@@ -4583,27 +4556,31 @@ function PersonalFinancePage({ ownerId }) {
 
   useEffect(() => {
     let active = true;
-    async function loadEncryptedRows() {
+    async function loadRecords() {
       if (mfaMode !== 'unlocked' || !ownerId || !supabase) return;
-      setVaultMode('loading'); setVaultError('');
-      const { data, error: queryError } = await supabase.from('personal_finance').select('id,owner_id,encrypted_payload').eq('owner_id', ownerId).order('id', { ascending: true });
+      setRecordsLoading(true); setRecordError('');
+      const { data, error: queryError } = await supabase.from('personal_finance').select('id,owner_id,amount_satang,transaction_at,detail').eq('owner_id', ownerId).order('transaction_at', { ascending: false });
       if (!active) return;
       if (queryError) {
-        setVaultMode('error');
-        setVaultError('เปิดคลังไม่ได้ ตรวจสอบว่า migration รายการเงินถูกนำไปใช้และสิทธิ์ owner-only RLS พร้อมแล้ว');
+        setRecordError('โหลดรายการไม่สำเร็จ ตรวจสอบการเชื่อมต่อแล้วลองใหม่');
+        setRecordsLoading(false);
         return;
       }
-      const rows = data || [];
-      setEncryptedRows(rows);
-      setVaultMode(rows.length ? 'locked' : 'new');
+      setRecords((data || []).filter((row) => row.amount_satang != null && row.transaction_at && row.detail != null).map((row) => ({
+        id: row.id,
+        amountSatang: Number(row.amount_satang),
+        transactionAt: row.transaction_at,
+        detail: row.detail,
+      })));
+      setRecordsLoading(false);
     }
-    loadEncryptedRows().catch(() => { if (active) { setVaultMode('error'); setVaultError('เปิดคลังไม่ได้ กรุณาลองอีกครั้ง'); } });
+    loadRecords().catch(() => { if (active) { setRecordError('โหลดรายการไม่สำเร็จ กรุณาลองอีกครั้ง'); setRecordsLoading(false); } });
     return () => { active = false; };
   }, [mfaMode, ownerId]);
 
   const verifyMfa = async (event) => {
     event.preventDefault();
-    if (!mfaFactorId || !/^\d{6,8}$/.test(mfaCode.trim())) { setMfaError('กรอกรหัสจากแอปยืนยันตัวตน 6–8 หลัก'); return; }
+    if (!mfaFactorId || !/^\d{6}$/.test(mfaCode.trim())) { setMfaError('กรอกรหัส 6 หลักจากแอป Authenticator'); return; }
     setMfaBusy(true); setMfaError('');
     try {
       const { data: challenge, error: challengeError } = await supabase.auth.mfa.challenge({ factorId: mfaFactorId });
@@ -4618,127 +4595,26 @@ function PersonalFinancePage({ ownerId }) {
     } finally { setMfaBusy(false); }
   };
 
-  const unlockVault = async (event) => {
-    event.preventDefault(); setVaultError('');
-    if (vaultPassword.length < 12) { setVaultError('ใช้รหัสคลังอย่างน้อย 12 ตัวอักษร'); return; }
-    setRecordsLoading(true);
+  const saveRecord = async (event) => {
+    event.preventDefault();
+    const amountSatang = parseFinanceAmount(amount);
+    if (!amountSatang || !detail.trim()) { setRecordError('กรอกจำนวนเงินและรายละเอียดให้ครบ'); return; }
+    if (!supabase || !ownerId) { setRecordError('ยังไม่ได้เชื่อมต่อบัญชี'); return; }
+    setSavingId(editingId || 'new'); setRecordError('');
     try {
-      const key = await deriveFinanceKey(vaultPassword, ownerId);
-      const decrypted = [];
-      for (const row of encryptedRows) decrypted.push(await decryptFinanceRecord(key, ownerId, row));
-      setVaultKey(key); setRecords(decrypted); setVaultPassword(''); setVaultMode('open');
-    } catch {
-      setVaultError(encryptedRows.length ? 'รหัสคลังไม่ถูกต้อง หรือข้อมูลเข้ารหัสเสียหาย' : 'สร้างคลังไม่สำเร็จ กรุณาลองอีกครั้ง');
-    } finally { setVaultPassword(''); setRecordsLoading(false); }
-  };
-
-  const addManualDraft = () => setDrafts((current) => [...current, { draftId: crypto.randomUUID(), amount: '', date: '', time: '', detail: '', source: 'manual' }]);
-
-  const handleOcr = async () => {
-    const files = Array.from(inputRef.current?.files || []);
-    if (!files.length || files.length > 10 || ocrBusy) return;
-    const supportedImageType = (file) => /^(image\/(jpeg|png|webp|heic|heif|bmp|tiff|x-tiff))$/i.test(file.type)
-      || (!file.type && /\.(jpe?g|png|webp|heic|heif|bmp|tiff?)$/i.test(file.name));
-    if (files.some((file) => !supportedImageType(file) || file.size > 20 * 1024 * 1024)) {
-      setRecordError('เลือกไฟล์รูปภาพขนาดไม่เกิน 20 MB ต่อรูป (รองรับ JPEG, PNG, WebP และ HEIC ตามความสามารถของ Browser)');
-      if (inputRef.current) inputRef.current.value = '';
-      setFileCount(0);
-      return;
-    }
-    setFileCount(files.length); setOcrProgress(0); setOcrStatus('กำลังเริ่ม OCR ในอุปกรณ์นี้…'); setOcrBusy(true); setRecordError('');
-    cancelOcrRef.current = false;
-    let worker = null;
-    const results = [];
-    try {
-      const { createWorker, setLogging } = await import('tesseract.js');
-      setLogging(false);
-      worker = await createWorker('tha+eng', 1, {
-        workerPath: `${window.location.origin}/ocr/worker.min.js`,
-        langPath: `${window.location.origin}/ocr/tessdata`,
-        corePath: `${window.location.origin}/ocr/core`,
-        gzip: true,
-        cacheMethod: 'none',
-        logger: (message) => {
-          if (!aliveRef.current || cancelOcrRef.current) return;
-          if (message.status) setOcrStatus(message.status === 'recognizing text' ? 'กำลังอ่านข้อความบนอุปกรณ์นี้' : 'กำลังเตรียมตัวอ่านสลิป');
-          if (message.status === 'recognizing text' && Number.isFinite(message.progress)) setOcrProgress(Math.min(99, Math.round(((currentIndexRef.current + message.progress) / files.length) * 100)));
-        },
-      });
-      workerRef.current = worker;
-      let failedCount = 0;
-      let fieldsFound = 0;
-      for (let index = 0; index < files.length; index += 1) {
-        if (cancelOcrRef.current) break;
-        currentIndexRef.current = index;
-        setOcrStatus(`อ่านสลิป ${index + 1} จาก ${files.length}`);
-        let rawText = '';
-        let recognition = null;
-        let preparedImage = null;
-        try {
-          preparedImage = await prepareFinanceOcrImage(files[index]);
-          recognition = await worker.recognize(preparedImage);
-          rawText = recognition?.data?.text || '';
-          const parsed = parseFinanceOcr(rawText);
-          fieldsFound += Number(Boolean(parsed.amountSatang)) + Number(Boolean(parsed.date)) + Number(Boolean(parsed.time));
-          results.push({ draftId: crypto.randomUUID(), amount: parsed.amountSatang ? formatFinanceAmount(parsed.amountSatang) : '', date: parsed.date, time: parsed.time, detail: '', source: 'ocr' });
-        } catch {
-          failedCount += 1;
-          results.push({ draftId: crypto.randomUUID(), amount: '', date: '', time: '', detail: '', source: 'manual' });
-        } finally {
-          rawText = '';
-          recognition = null;
-          preparedImage = null;
-          setOcrProgress(Math.round(((index + 1) / files.length) * 100));
-        }
-      }
-      if (aliveRef.current && !cancelOcrRef.current) {
-        setDrafts((current) => [...current, ...results]);
-        setOcrStatus(`อ่านเสร็จ ${results.length} จาก ${files.length} รูป · พบข้อมูล ${fieldsFound} ช่อง${failedCount ? ` · อ่านภาพไม่สำเร็จ ${failedCount} รูป` : ''} · ตรวจสอบและกรอกรายละเอียดก่อนบันทึก`);
-      } else if (aliveRef.current) setOcrStatus(`ยกเลิกแล้ว · อ่านได้ ${results.length} รูป`);
-    } catch {
-      if (aliveRef.current) setRecordError('เปิดตัวอ่าน OCR ในเครื่องไม่สำเร็จ ตรวจว่าไฟล์ OCR ภาษาไทย/อังกฤษอยู่บนเว็บครบถ้วน');
-    } finally {
-      if (worker) await worker.terminate();
-      if (workerRef.current === worker) workerRef.current = null;
-      if (inputRef.current) inputRef.current.value = '';
-      if (aliveRef.current) { setOcrBusy(false); setFileCount(0); }
-    }
-  };
-
-  const cancelOcr = () => {
-    cancelOcrRef.current = true;
-    if (workerRef.current) workerRef.current.terminate();
-    workerRef.current = null;
-    setOcrStatus('กำลังหยุดตัวอ่านและล้างข้อมูลชั่วคราว…');
-  };
-
-  const saveRecord = async (draft, editing = false) => {
-    const amountSatang = parseFinanceAmount(draft.amount);
-    if (!amountSatang || !draft.date || !draft.time || !draft.detail.trim()) {
-      setRecordError('กรอกจำนวนเงิน วันที่ เวลา และรายละเอียดให้ครบก่อนบันทึก'); return;
-    }
-    const duplicate = records.some((record) => record.id !== draft.id && record.amountSatang === amountSatang && record.date === draft.date && record.time === draft.time)
-      || drafts.some((item) => item.draftId !== draft.draftId && parseFinanceAmount(item.amount) === amountSatang && item.date === draft.date && item.time === draft.time);
-    if (duplicate && !await requestAppDialog('confirm', 'พบรายการที่จำนวนเงิน วันที่ และเวลาตรงกัน อาจเป็นรายการซ้ำ ต้องการบันทึกต่อหรือไม่?')) return;
-    setRecordError(''); setSavingId(draft.draftId || draft.id);
-    try {
-      const recordId = editing ? draft.id : crypto.randomUUID();
-      const record = { amountSatang, date: draft.date, time: draft.time, detail: draft.detail.trim() };
-      const encryptedPayload = await encryptFinanceRecord(vaultKey, ownerId, recordId, record);
-      if (editing) {
-        const { data, error: updateError } = await supabase.from('personal_finance').update({ encrypted_payload: encryptedPayload }).eq('id', recordId).eq('owner_id', ownerId).select('id').maybeSingle();
+      const values = { amount_satang: amountSatang, detail: detail.trim() };
+      if (editingId) {
+        const { data, error: updateError } = await supabase.from('personal_finance').update(values).eq('id', editingId).eq('owner_id', ownerId).select('id,owner_id,amount_satang,transaction_at,detail').maybeSingle();
         if (updateError || !data) throw updateError || new Error('No row updated');
-        setRecords((current) => current.map((item) => item.id === recordId ? { ...record, id: recordId } : item));
-        editOriginalRef.current = null;
-        setEditingId('');
+        setRecords((current) => current.map((record) => record.id === editingId ? { ...record, amountSatang: Number(data.amount_satang), detail: data.detail } : record));
       } else {
-        const { error: insertError } = await supabase.from('personal_finance').insert({ id: recordId, owner_id: ownerId, encrypted_payload: encryptedPayload });
-        if (insertError) throw insertError;
-        setRecords((current) => [...current, { ...record, id: recordId }]);
-        setDrafts((current) => current.filter((item) => item.draftId !== draft.draftId));
+        const { data, error: insertError } = await supabase.from('personal_finance').insert({ ...values, owner_id: ownerId }).select('id,owner_id,amount_satang,transaction_at,detail').single();
+        if (insertError || !data) throw insertError || new Error('No row inserted');
+        setRecords((current) => [{ id: data.id, amountSatang: Number(data.amount_satang), transactionAt: data.transaction_at, detail: data.detail }, ...current]);
       }
+      setAmount(''); setDetail(''); setEditingId('');
     } catch {
-      setRecordError('บันทึกไม่สำเร็จ ตรวจการเชื่อมต่อและสิทธิ์ owner-only RLS แล้วลองอีกครั้ง');
+      setRecordError('บันทึกไม่สำเร็จ ตรวจสอบว่ามีการอัปเดตตารางรายการเงินแล้วลองอีกครั้ง');
     } finally { setSavingId(''); }
   };
 
@@ -4749,91 +4625,51 @@ function PersonalFinancePage({ ownerId }) {
     setRecords((current) => current.filter((item) => item.id !== record.id));
   };
 
-  const updateDraft = (draftId, changes) => setDrafts((current) => current.map((item) => item.draftId === draftId ? { ...item, ...changes } : item));
-  const editingRecord = records.find((record) => record.id === editingId);
-  const monthRecords = records.filter((record) => record.date.startsWith(month));
-  const dayRecords = records.filter((record) => record.date === selectedDate);
+  const bangkokParts = (value) => Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(value)).map((part) => [part.type, part.value]));
+  const dateKey = (value) => { const p = bangkokParts(value); return `${p.year}-${p.month}-${p.day}`; };
+  const monthKey = (value) => dateKey(value).slice(0, 7);
+  const formatTransactionDate = (value) => new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeZone: 'Asia/Bangkok' }).format(new Date(value));
+  const monthRecords = records.filter((record) => monthKey(record.transactionAt) === month);
+  const dayRecords = records.filter((record) => dateKey(record.transactionAt) === selectedDate);
   const sumAmount = (list) => list.reduce((sum, record) => sum + BigInt(record.amountSatang), 0n);
-  const formatDate = (value) => new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeZone: 'Asia/Bangkok' }).format(new Date(`${value}T00:00:00+07:00`));
 
   if (mfaMode !== 'unlocked') return (
     <div className="mx-auto max-w-xl space-y-4 rounded-2xl border border-slate-700 bg-slate-900 p-5 text-white shadow-sm sm:p-7">
-      <div><p className="text-xs font-semibold uppercase tracking-[.18em] text-cyan-300">รายการเงิน · MFA</p><h1 className="mt-1 text-xl font-bold">ยืนยันตัวตนหลายขั้นตอน</h1><p className="mt-1 text-sm text-slate-400">ข้อมูลการเงินต้องใช้ TOTP และสิทธิ์ระดับ AAL2 ก่อนเปิดคลัง</p></div>
+      <div><p className="text-xs font-semibold uppercase tracking-[.18em] text-cyan-300">รายการเงิน</p><h1 className="mt-1 text-xl font-bold">กรอกรหัส 6 หลัก</h1><p className="mt-1 text-sm text-slate-400">ใช้รหัสจากแอป Authenticator เพื่อเข้าหน้านี้</p></div>
       {mfaMode === 'checking' && <p className="text-sm text-slate-300">กำลังตรวจสอบการยืนยันตัวตน…</p>}
       {mfaMode === 'error' && <div className="space-y-3"><p role="alert" className="text-sm text-rose-300">{mfaError}</p><button type="button" onClick={() => setMfaRetry((value) => value + 1)} className="min-h-10 rounded-xl border border-slate-600 px-4 text-sm font-semibold">ลองอีกครั้ง</button></div>}
       {(mfaMode === 'enroll' || mfaMode === 'challenge') && <form onSubmit={verifyMfa} className="space-y-4">
         {mfaMode === 'enroll' ? <div className="rounded-xl border border-slate-700 bg-slate-950 p-4"><p className="text-sm font-semibold">เพิ่มบัญชีนี้ในแอป Authenticator</p><p className="mt-1 text-xs leading-5 text-slate-400">สแกน QR บนหน้าจอนี้ หรือป้อนรหัสลับในแอปยืนยันตัวตน ห้ามส่งต่อ QR หรือรหัสลับ</p>{mfaQr && <img src={mfaQr} alt="QR สำหรับตั้งค่า MFA ชั่วคราว" className="mx-auto mt-3 h-40 w-40 rounded-lg bg-white p-2" /> }<p className="mt-3 select-all break-all rounded-lg bg-slate-900 px-3 py-2 font-mono text-sm tracking-widest text-cyan-200">{mfaSecret || 'กำลังเตรียมรหัสลับ…'}</p></div> : <p className="text-sm text-slate-300">กรอกรหัส 6 หลักจากแอป Authenticator ที่ลงทะเบียนไว้</p>}
-        <label className="block"><span className="mb-1 block text-xs font-semibold text-slate-300">รหัสยืนยัน</span><input value={mfaCode} onChange={(event) => setMfaCode(event.target.value.replace(/\D/g, '').slice(0, 8))} inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6,8}" required className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-lg tracking-[.3em] text-white" /></label>
+        <label className="block"><span className="mb-1 block text-xs font-semibold text-slate-300">รหัส 6 หลัก</span><input value={mfaCode} onChange={(event) => setMfaCode(event.target.value.replace(/\D/g, '').slice(0, 6))} inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-lg tracking-[.3em] text-white" /></label>
         {mfaError && <p role="alert" className="text-sm text-rose-300">{mfaError}</p>}
         <button type="submit" disabled={mfaBusy || !mfaFactorId} className="min-h-11 w-full rounded-xl bg-blue-600 px-4 text-sm font-bold text-white disabled:opacity-60">{mfaBusy ? 'กำลังยืนยัน…' : 'ยืนยันและเปิดรายการเงิน'}</button>
       </form>}
     </div>
   );
 
-  if (vaultMode === 'loading') return <div className="mx-auto max-w-xl rounded-2xl border border-slate-700 bg-slate-900 p-5 text-sm text-slate-300">กำลังเปิดคลังการเงินแบบเข้ารหัส…</div>;
-  if (vaultMode === 'error') return <div className="mx-auto max-w-xl space-y-3 rounded-2xl border border-slate-700 bg-slate-900 p-5 text-white"><h1 className="text-xl font-bold">รายการเงิน</h1><p role="alert" className="text-sm text-rose-300">{vaultError}</p></div>;
-  if (vaultMode !== 'open') return (
-    <div className="mx-auto max-w-xl space-y-4 rounded-2xl border border-slate-700 bg-slate-900 p-5 text-white shadow-sm sm:p-7">
-      <div><p className="text-xs font-semibold uppercase tracking-[.18em] text-cyan-300">รายการเงิน · Encrypted Vault</p><h1 className="mt-1 text-xl font-bold">{vaultMode === 'new' ? 'ตั้งรหัสเปิดคลังการเงิน' : 'ปลดล็อกคลังการเงิน'}</h1><p className="mt-1 text-sm text-slate-400">ใช้เฉพาะในหน่วยความจำของ Browser ไม่บันทึกรหัสหรือข้อมูลรายการไว้ใน Local Storage</p></div>
-      <form onSubmit={unlockVault} className="space-y-3">
-        <label className="block"><span className="mb-1 block text-xs font-semibold text-slate-300">{vaultMode === 'new' ? 'รหัสคลังใหม่ (อย่างน้อย 12 ตัวอักษร)' : 'รหัสคลัง'}</span><input type="password" value={vaultPassword} onChange={(event) => setVaultPassword(event.target.value)} autoComplete="off" spellCheck="false" minLength={12} required className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-sm text-white" /></label>
-        {vaultError && <p role="alert" className="text-sm text-rose-300">{vaultError}</p>}
-        <button type="submit" disabled={recordsLoading} className="min-h-11 w-full rounded-xl bg-blue-600 px-4 text-sm font-bold text-white disabled:opacity-60">{recordsLoading ? 'กำลังปลดล็อก…' : vaultMode === 'new' ? 'สร้างคลังเข้ารหัส' : 'ปลดล็อกข้อมูล'}</button>
-      </form>
-      <p className="rounded-xl border border-amber-900/60 bg-amber-950/30 p-3 text-xs leading-5 text-amber-100">รหัสนี้ใช้เข้ารหัสข้อมูลแบบ AES-GCM 256-bit และไม่ถูกส่งไป Supabase หากลืมรหัส จะไม่สามารถกู้คืนรายการการเงินได้</p>
-    </div>
-  );
-
-  const visibleMonthRecords = [...monthRecords].sort((a, b) => `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`));
-  const duplicateForDraft = (draft) => {
-    const amountSatang = parseFinanceAmount(draft.amount);
-    return amountSatang && (records.some((record) => record.id !== draft.id && record.amountSatang === amountSatang && record.date === draft.date && record.time === draft.time)
-      || drafts.some((item) => item.draftId !== draft.draftId && parseFinanceAmount(item.amount) === amountSatang && item.date === draft.date && item.time === draft.time));
-  };
-  const recordEditor = (draft, editing = false) => (
-    <article key={editing ? draft.id : draft.draftId} className="space-y-3 rounded-xl border border-slate-700 bg-slate-950/65 p-4">
-      <div className="flex items-center justify-between gap-3"><h3 className="text-sm font-semibold text-white">{editing ? `แก้ไขรายการ · ${formatDate(draft.date)}` : draft.source === 'ocr' ? 'ตรวจสอบสลิปที่อ่านได้' : 'กรอกรายการด้วยตนเอง'}</h3>{!editing && <button type="button" onClick={() => setDrafts((items) => items.filter((item) => item.draftId !== draft.draftId))} className="rounded-lg px-2 py-1 text-xs text-slate-400 hover:bg-slate-800">เอาออก</button>}</div>
-      {draft.source === 'ocr' && <p className="text-xs text-amber-200">ตรวจสอบจำนวนเงิน วันที่ และเวลาให้ถูกต้อง พร้อมกรอกรายละเอียดเองทุกครั้ง</p>}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <label className="block"><span className="mb-1 block text-xs text-slate-400">จำนวนเงิน (บาท)</span><input inputMode="decimal" value={draft.amount} onChange={(event) => editing ? setRecords((items) => items.map((item) => item.id === draft.id ? { ...item, amount: event.target.value } : item)) : updateDraft(draft.draftId, { amount: event.target.value })} placeholder="0.00" className="w-full min-w-0 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm text-white" /></label>
-        <label className="block"><span className="mb-1 block text-xs text-slate-400">วันที่ทำรายการ</span><input type="date" value={draft.date} onChange={(event) => editing ? setRecords((items) => items.map((item) => item.id === draft.id ? { ...item, date: event.target.value } : item)) : updateDraft(draft.draftId, { date: event.target.value })} className="w-full min-w-0 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm text-white" /></label>
-        <label className="block"><span className="mb-1 block text-xs text-slate-400">เวลา</span><input type="time" value={draft.time} onChange={(event) => editing ? setRecords((items) => items.map((item) => item.id === draft.id ? { ...item, time: event.target.value } : item)) : updateDraft(draft.draftId, { time: event.target.value })} className="w-full min-w-0 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm text-white" /></label>
-      </div>
-      <label className="block"><span className="mb-1 block text-xs text-slate-400">รายละเอียด (จำเป็น)</span><textarea rows={2} required value={draft.detail} onChange={(event) => editing ? setRecords((items) => items.map((item) => item.id === draft.id ? { ...item, detail: event.target.value } : item)) : updateDraft(draft.draftId, { detail: event.target.value })} placeholder="กรอกรายละเอียดรายการด้วยตนเอง" className="w-full resize-y rounded-lg border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm text-white placeholder:text-slate-500" /></label>
-      {duplicateForDraft(draft) && <p role="status" className="rounded-lg border border-amber-900/60 bg-amber-950/30 px-3 py-2 text-xs text-amber-200">อาจซ้ำกับรายการเดิม: จำนวนเงิน วันที่ และเวลาตรงกัน</p>}
-      <div className="flex flex-wrap justify-end gap-2">
-        {editing && <button type="button" onClick={() => { if (editOriginalRef.current) setRecords((items) => items.map((item) => item.id === draft.id ? editOriginalRef.current : item)); editOriginalRef.current = null; setEditingId(''); }} className="min-h-10 rounded-lg border border-slate-700 px-3 text-xs font-semibold text-slate-300">ยกเลิก</button>}
-        <button type="button" disabled={savingId === (draft.draftId || draft.id)} onClick={() => saveRecord(draft, editing)} className="min-h-10 rounded-lg bg-blue-600 px-4 text-xs font-bold text-white disabled:opacity-60">{savingId === (draft.draftId || draft.id) ? 'กำลังบันทึก…' : editing ? 'บันทึกการแก้ไข' : 'บันทึกรายการ'}</button>
-      </div>
-    </article>
-  );
+  const visibleMonthRecords = [...monthRecords].sort((a, b) => b.transactionAt.localeCompare(a.transactionAt));
+  const cancelEdit = () => { setEditingId(''); setAmount(''); setDetail(''); };
 
   return (
     <div className="mx-auto max-w-5xl space-y-5">
-      <header><p className="text-xs font-semibold uppercase tracking-[.18em] text-cyan-300">ส่วนตัว · อ่านสลิปในเครื่อง · เข้ารหัส</p><h1 className="mt-1 text-2xl font-bold text-white">รายการเงิน</h1><p className="mt-1 text-sm text-slate-400">อ่านสลิปใน Browser นี้เท่านั้น · บันทึกเฉพาะข้อมูลธุรกรรมที่เข้ารหัส</p></header>
-      <section className="overflow-hidden rounded-2xl border border-slate-700 bg-slate-900 text-white">
-        <div className="border-b border-slate-700 bg-gradient-to-r from-blue-950 to-cyan-950 px-4 py-4 sm:px-5"><h2 className="text-base font-bold">อ่านสลิปในอุปกรณ์</h2><p className="mt-1 text-xs text-blue-100/80">เลือกได้ 1–10 รูป · OCR ภาษาไทยและอังกฤษทำงานบน Browser · รูปไม่ถูกอัปโหลด</p></div>
-        <div className="space-y-3 p-4 sm:p-5">
-          <input ref={inputRef} type="file" accept="image/*,.heic,.heif" multiple onChange={(event) => setFileCount(event.target.files?.length || 0)} className="block w-full rounded-xl border border-slate-700 bg-slate-950 p-2 text-xs text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-800 file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white" />
-          {fileCount > 10 && <p role="alert" className="text-xs text-rose-300">เลือกได้ไม่เกิน 10 รูปต่อครั้ง</p>}
-          <div className="flex flex-wrap gap-2"><button type="button" disabled={ocrBusy || !fileCount || fileCount > 10} onClick={handleOcr} className="min-h-10 rounded-xl bg-blue-600 px-4 text-xs font-bold text-white disabled:opacity-50">{ocrBusy ? 'กำลังอ่าน…' : `เริ่มอ่าน ${fileCount || ''} รูป`}</button>{ocrBusy && <button type="button" onClick={cancelOcr} className="min-h-10 rounded-xl border border-slate-600 px-4 text-xs font-semibold text-slate-200">ยกเลิก</button>}<button type="button" disabled={ocrBusy} onClick={addManualDraft} className="min-h-10 rounded-xl border border-slate-600 px-4 text-xs font-semibold text-slate-200 disabled:opacity-50">เพิ่มรายการกรอกเอง</button></div>
-          {ocrBusy && <div aria-live="polite"><div className="flex justify-between gap-3 text-xs text-slate-400"><span>{ocrStatus}</span><span>{ocrProgress}%</span></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-800"><div className="h-full rounded-full bg-cyan-400 transition-[width]" style={{ width: `${ocrProgress}%` }} /></div></div>}
-          {!ocrBusy && ocrStatus && <p role="status" className="text-xs text-slate-400">{ocrStatus}</p>}
-          <p className="text-[11px] leading-5 text-slate-500">ระบบไม่บันทึกหรือแสดง OCR text ดิบ และไม่อ่านข้อความชื่อผู้โอน ผู้รับ เลขบัญชี หรือ QR · เมื่อตรวจเสร็จจะล้างรายการไฟล์ชั่วคราวและหยุด OCR worker</p>
-        </div>
+      <header><p className="text-xs font-semibold uppercase tracking-[.18em] text-cyan-300">บันทึกและสรุปยอด</p><h1 className="mt-1 text-2xl font-bold text-white">รายการเงิน</h1><p className="mt-1 text-sm text-slate-400">กรอกจำนวนเงินและรายละเอียด · วันที่และเวลาบันทึกให้อัตโนมัติ</p></header>
+      <section className="rounded-2xl border border-slate-700 bg-slate-900 p-4 text-white sm:p-5">
+        <h2 className="text-base font-bold">{editingId ? 'แก้ไขรายการ' : 'เพิ่มรายการ'}</h2>
+        <form onSubmit={saveRecord} className="mt-4 space-y-3">
+          <label className="block"><span className="mb-1 block text-xs text-slate-400">จำนวนเงิน (บาท)</span><input inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="0.00" required className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-3 text-base text-white" /></label>
+          <label className="block"><span className="mb-1 block text-xs text-slate-400">รายละเอียด</span><textarea rows={2} value={detail} onChange={(event) => setDetail(event.target.value)} placeholder="เช่น ค่าอาหาร, ค่าเดินทาง" required className="w-full resize-y rounded-lg border border-slate-700 bg-slate-950 px-3 py-3 text-sm text-white placeholder:text-slate-500" /></label>
+          {recordError && <p role="alert" className="text-sm text-rose-300">{recordError}</p>}
+          <div className="flex flex-wrap gap-2">{editingId && <button type="button" onClick={cancelEdit} className="min-h-10 rounded-lg border border-slate-700 px-4 text-xs font-semibold text-slate-300">ยกเลิก</button>}<button type="submit" disabled={Boolean(savingId)} className="min-h-10 rounded-lg bg-blue-600 px-4 text-xs font-bold text-white disabled:opacity-60">{savingId ? 'กำลังบันทึก…' : editingId ? 'บันทึกการแก้ไข' : 'บันทึกรายการ'}</button></div>
+        </form>
       </section>
 
-      {drafts.length > 0 && <section className="space-y-3"><h2 className="text-sm font-bold text-white">ตรวจสอบก่อนบันทึก · {drafts.length} รายการ</h2>{drafts.map((draft) => recordEditor(draft))}</section>}
-      {editingRecord && <section className="space-y-3"><h2 className="text-sm font-bold text-white">แก้ไขรายการ</h2>{recordEditor({ ...editingRecord, amount: formatFinanceAmount(editingRecord.amountSatang) }, true)}</section>}
-      {recordError && <p role="alert" className="rounded-xl border border-rose-900/60 bg-rose-950/30 px-4 py-3 text-sm text-rose-200">{recordError}</p>}
-
       <section className="rounded-2xl border border-slate-700 bg-slate-900 p-4 text-white sm:p-5">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><h2 className="text-base font-bold">สรุปยอด</h2><p className="mt-1 text-xs text-slate-400">คำนวณบน Browser จากรายการที่ปลดล็อกแล้ว · Asia/Bangkok</p></div><label className="block"><span className="mb-1 block text-xs text-slate-400">เลือกเดือน</span><input type="month" value={month} onChange={(event) => setMonth(event.target.value)} className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white" /></label></div>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><h2 className="text-base font-bold">สรุปยอด</h2><p className="mt-1 text-xs text-slate-400">คำนวณจากรายการทั้งหมด · Asia/Bangkok</p></div><label className="block"><span className="mb-1 block text-xs text-slate-400">เลือกเดือน</span><input type="month" value={month} onChange={(event) => setMonth(event.target.value)} className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white" /></label></div>
         <div className="mt-4 grid gap-3 sm:grid-cols-2"><div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4"><p className="text-xs text-slate-400">ยอดรวมรายเดือน · {month}</p><p className="mt-1 text-2xl font-bold text-cyan-200">฿{formatFinanceAmount(sumAmount(monthRecords))}</p><p className="mt-1 text-xs text-slate-500">{monthRecords.length} รายการ</p></div><div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4"><label className="block"><span className="text-xs text-slate-400">สรุปรายวัน</span><input type="date" value={selectedDate} onChange={(event) => setSelectedDate(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white" /></label><p className="mt-2 text-2xl font-bold text-cyan-200">฿{formatFinanceAmount(sumAmount(dayRecords))}</p><p className="mt-1 text-xs text-slate-500">{dayRecords.length} รายการ</p></div></div>
       </section>
 
       <section className="space-y-3"><div className="flex items-center justify-between gap-3"><h2 className="text-sm font-bold text-white">รายการของเดือน {month}</h2><span className="text-xs text-slate-400">{visibleMonthRecords.length} รายการ</span></div>
-        {visibleMonthRecords.length ? visibleMonthRecords.map((record) => <article key={record.id} className="rounded-xl border border-slate-700 bg-slate-900 p-4 text-white"><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><p className="text-lg font-bold text-cyan-200">฿{formatFinanceAmount(record.amountSatang)}</p><p className="mt-0.5 text-xs text-slate-400">{formatDate(record.date)} · {record.time} น.</p><p className="mt-2 whitespace-pre-wrap break-words text-sm text-slate-200">{record.detail}</p></div><div className="flex shrink-0 gap-2"><button type="button" onClick={() => { editOriginalRef.current = { ...record }; setEditingId(record.id); }} className="min-h-9 rounded-lg border border-slate-600 px-3 text-xs font-semibold text-blue-200">แก้ไข</button><button type="button" onClick={() => deleteRecord(record)} className="min-h-9 rounded-lg border border-rose-900 px-3 text-xs font-semibold text-rose-300">ลบ</button></div></div></article>) : <div className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-8 text-center text-sm text-slate-400">ยังไม่มีรายการในเดือนนี้</div>}
+        {recordsLoading ? <div className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-8 text-center text-sm text-slate-400">กำลังโหลดรายการ…</div> : visibleMonthRecords.length ? visibleMonthRecords.map((record) => <article key={record.id} className="rounded-xl border border-slate-700 bg-slate-900 p-4 text-white"><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><p className="text-lg font-bold text-cyan-200">฿{formatFinanceAmount(record.amountSatang)}</p><p className="mt-0.5 text-xs text-slate-400">{formatTransactionDate(record.transactionAt)} · {bangkokParts(record.transactionAt).hour}:{bangkokParts(record.transactionAt).minute} น.</p><p className="mt-2 whitespace-pre-wrap break-words text-sm text-slate-200">{record.detail}</p></div><div className="flex shrink-0 gap-2"><button type="button" onClick={() => { setEditingId(record.id); setAmount(formatFinanceAmount(record.amountSatang)); setDetail(record.detail); }} className="min-h-9 rounded-lg border border-slate-600 px-3 text-xs font-semibold text-blue-200">แก้ไข</button><button type="button" onClick={() => deleteRecord(record)} className="min-h-9 rounded-lg border border-rose-900 px-3 text-xs font-semibold text-rose-300">ลบ</button></div></div></article>) : <div className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-8 text-center text-sm text-slate-400">ยังไม่มีรายการในเดือนนี้</div>}
       </section>
     </div>
   );
