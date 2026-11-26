@@ -1312,6 +1312,30 @@ body.theme-dark .app-sidebar nav > p::after {
 
 @media screen {
   body.theme-dark .app-main :where(.grid, .flex) > * { min-inline-size: 0; }
+  body.theme-dark .app-main :where(label, form, .grid, .flex) { min-inline-size: 0; }
+  body.theme-dark .app-main :where(input[type="date"], input[type="month"], input[type="datetime-local"]) {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    min-inline-size: 0;
+    max-width: 100%;
+    max-inline-size: 100%;
+  }
+  body.theme-dark .app-main input[type="date"]::-webkit-date-and-time-value,
+  body.theme-dark .app-main input[type="month"]::-webkit-date-and-time-value,
+  body.theme-dark .app-main input[type="datetime-local"]::-webkit-date-and-time-value {
+    width: 100%;
+    min-width: 0;
+    min-inline-size: 0;
+    text-align: left;
+  }
+  body.theme-dark .app-main input[type="date"]::-webkit-calendar-picker-indicator,
+  body.theme-dark .app-main input[type="month"]::-webkit-calendar-picker-indicator,
+  body.theme-dark .app-main input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+    flex: 0 0 auto;
+    margin-inline-start: .25rem;
+  }
   .app-main :where(article, td, dd, p, label, h2, h3), [role="dialog"] { overflow-wrap: anywhere; }
   .app-main :where(input, textarea, select), .app-main .overflow-x-auto { max-inline-size: 100%; }
   .app-sidebar nav { min-height: 0; overscroll-behavior: contain; }
@@ -1340,6 +1364,12 @@ body.theme-dark .app-sidebar nav > p::after {
   .login-form-panel input { font-size: max(16px, 1rem); min-inline-size: 0; }
   .app-main .grid-cols-7 { column-gap: .15rem; }
   .app-main .grid-cols-7 > button { padding-inline: .15rem; }
+}
+@media screen and (max-width: 1023px) {
+  body.theme-dark .app-main :where(input[type="date"], input[type="month"], input[type="datetime-local"]) {
+    padding-inline: .6rem;
+    font-size: max(16px, 1rem);
+  }
 }
 @media screen and (max-height: 520px) and (max-width: 1023px) {
   body.theme-dark .app-sidebar { overflow-y: auto; }
