@@ -63,7 +63,7 @@ function useScheduledReminderAlerts(ownerId) {
     const shownInMemory = new Set();
     const load = async () => {
       const { data, error } = await supabase.from('scheduled_notifications')
-        .select('id,title,repeat_type,remind_at,remind_month,remind_day')
+        .select('id,title,repeat_type,remind_at,remind_weekdays,remind_month,remind_day')
         .eq('owner_id', ownerId).eq('enabled', true);
       if (active && !error) reminders = data || [];
     };
@@ -72,8 +72,12 @@ function useScheduledReminderAlerts(ownerId) {
       const now = bangkokDateTimeParts();
       const today = `${now.year}-${now.month}-${now.day}`;
       const currentMinute = Number(now.hour) * 60 + Number(now.minute);
+      const weekday = new Date(`${today}T00:00:00Z`).getUTCDay() || 7;
       const due = [];
       reminders.forEach((reminder) => {
+        if (reminder.repeat_type === 'weekly'
+          && !reminder.remind_weekdays?.includes(weekday)) return;
+        if (reminder.repeat_type === 'monthly' && Number(reminder.remind_day) !== Number(now.day)) return;
         if (reminder.repeat_type === 'yearly'
           && (Number(reminder.remind_month) !== Number(now.month) || Number(reminder.remind_day) !== Number(now.day))) return;
         const [hour, minute] = String(reminder.remind_at || '').slice(0, 5).split(':').map(Number);
@@ -4606,7 +4610,11 @@ function SharedPagePinGate({ title, onUnlock }) {
   );
 }
 
-const emptyReminderDraft = { title: '', repeat_type: 'daily', remind_at: '09:00', remind_month: '1', remind_day: '1' };
+const WEEKDAYS = [
+  { value: 1, label: 'จันทร์' }, { value: 2, label: 'อังคาร' }, { value: 3, label: 'พุธ' },
+  { value: 4, label: 'พฤหัสบดี' }, { value: 5, label: 'ศุกร์' }, { value: 6, label: 'เสาร์' }, { value: 7, label: 'อาทิตย์' },
+];
+const emptyReminderDraft = { title: '', repeat_type: 'daily', remind_at: '09:00', remind_weekdays: [], remind_month: '1', remind_day: '1' };
 
 function ScheduledNotificationsPage({ ownerId }) {
   const [unlocked, setUnlocked] = useState(false);
@@ -4622,7 +4630,7 @@ function ScheduledNotificationsPage({ ownerId }) {
     if (!supabase || !ownerId) { setError('ยังไม่ได้เชื่อมต่อบัญชี'); setLoading(false); return; }
     setLoading(true); setError('');
     const { data, error: queryError } = await supabase.from('scheduled_notifications')
-      .select('id,owner_id,title,repeat_type,remind_at,remind_month,remind_day,enabled,created_at')
+      .select('id,owner_id,title,repeat_type,remind_at,remind_weekdays,remind_month,remind_day,enabled,created_at')
       .eq('owner_id', ownerId).order('created_at', { ascending: false });
     if (queryError) setError('โหลดรายการแจ้งเตือนไม่สำเร็จ ตรวจสอบ migration แล้วลองใหม่');
     else setReminders(data || []);
@@ -4634,13 +4642,15 @@ function ScheduledNotificationsPage({ ownerId }) {
   const saveReminder = async (event) => {
     event.preventDefault();
     if (!supabase || !ownerId || !draft.title.trim()) { setError('กรอกหัวข้อแจ้งเตือนให้ครบ'); return; }
+    if (draft.repeat_type === 'weekly' && draft.remind_weekdays.length === 0) { setError('เลือกวันในสัปดาห์อย่างน้อยหนึ่งวัน'); return; }
     const payload = {
       owner_id: ownerId,
       title: draft.title.trim(),
       repeat_type: draft.repeat_type,
       remind_at: draft.remind_at,
+      remind_weekdays: draft.repeat_type === 'weekly' ? draft.remind_weekdays : null,
       remind_month: draft.repeat_type === 'yearly' ? Number(draft.remind_month) : null,
-      remind_day: draft.repeat_type === 'yearly' ? Number(draft.remind_day) : null,
+      remind_day: ['monthly', 'yearly'].includes(draft.repeat_type) ? Number(draft.remind_day) : null,
       enabled: true,
     };
     setSaving(true); setError(''); setMessage('');
@@ -4659,7 +4669,7 @@ function ScheduledNotificationsPage({ ownerId }) {
 
   const editReminder = (item) => {
     setEditingId(item.id);
-    setDraft({ title: item.title, repeat_type: item.repeat_type, remind_at: String(item.remind_at).slice(0, 5), remind_month: String(item.remind_month || 1), remind_day: String(item.remind_day || 1) });
+    setDraft({ title: item.title, repeat_type: item.repeat_type, remind_at: String(item.remind_at).slice(0, 5), remind_weekdays: item.remind_weekdays || [], remind_month: String(item.remind_month || 1), remind_day: String(item.remind_day || 1) });
     setMessage(''); setError('');
   };
 
@@ -4681,18 +4691,24 @@ function ScheduledNotificationsPage({ ownerId }) {
   if (!unlocked) return <SharedPagePinGate title="แจ้งเตือน" onUnlock={() => setUnlocked(true)} />;
 
   const monthNames = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
-  const formatSchedule = (item) => item.repeat_type === 'daily'
-    ? `ทุกวัน เวลา ${String(item.remind_at).slice(0, 5)}`
-    : `ทุกปี วันที่ ${item.remind_day} ${monthNames[Number(item.remind_month) - 1]} เวลา ${String(item.remind_at).slice(0, 5)}`;
+  const formatSchedule = (item) => {
+    const time = String(item.remind_at).slice(0, 5);
+    if (item.repeat_type === 'daily') return `ทุกวัน เวลา ${time}`;
+    if (item.repeat_type === 'weekly') return `ทุกสัปดาห์ (${(item.remind_weekdays || []).map((day) => WEEKDAYS.find((weekday) => weekday.value === day)?.label).filter(Boolean).join(', ')}) เวลา ${time}`;
+    if (item.repeat_type === 'monthly') return `วันที่ ${item.remind_day} ของทุกเดือน เวลา ${time}`;
+    return `ทุกปี วันที่ ${item.remind_day} ${monthNames[Number(item.remind_month) - 1]} เวลา ${time}`;
+  };
 
   return (
     <div className="mx-auto max-w-5xl space-y-5">
-      <header><p className="text-xs font-semibold uppercase tracking-[.18em] text-cyan-300">ตั้งเวลาแจ้งเตือน</p><h1 className="mt-1 text-2xl font-bold text-white">แจ้งเตือน</h1><p className="mt-1 text-sm text-slate-400">กำหนดให้เตือนทุกวันหรือวนซ้ำทุกปี ตามเวลาไทย</p></header>
+      <header><p className="text-xs font-semibold uppercase tracking-[.18em] text-cyan-300">ตั้งเวลาแจ้งเตือน</p><h1 className="mt-1 text-2xl font-bold text-white">แจ้งเตือน</h1><p className="mt-1 text-sm text-slate-400">ตั้งให้เตือนทุกวัน เลือกวันในสัปดาห์ วันที่ของทุกเดือน หรือวันเดิมทุกปี ตามเวลาไทย</p></header>
       <section className="overflow-hidden rounded-2xl border border-slate-700 bg-slate-900 text-white shadow-sm">
         <div className="border-b border-slate-700 bg-gradient-to-r from-blue-950 to-cyan-950 px-5 py-4"><h2 className="text-base font-bold">{editingId ? 'แก้ไขการแจ้งเตือน' : 'เพิ่มการแจ้งเตือน'}</h2></div>
         <form onSubmit={saveReminder} className="grid min-w-0 grid-cols-1 gap-3 p-4 sm:grid-cols-2 sm:p-5">
           <label className="block min-w-0 sm:col-span-2"><span className="mb-1 block text-xs font-semibold text-slate-300">หัวข้อ</span><input value={draft.title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} maxLength={120} required placeholder="เช่น ชำระค่าบริการ" className="w-full min-w-0 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-base text-white" /></label>
-          <label className="block min-w-0"><span className="mb-1 block text-xs font-semibold text-slate-300">การวนซ้ำ</span><select value={draft.repeat_type} onChange={(event) => setDraft((current) => ({ ...current, repeat_type: event.target.value }))} className="w-full min-w-0 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-base text-white"><option value="daily">ทุกวัน</option><option value="yearly">ทุกปี</option></select></label>
+          <label className="block min-w-0"><span className="mb-1 block text-xs font-semibold text-slate-300">การวนซ้ำ</span><select value={draft.repeat_type} onChange={(event) => setDraft((current) => ({ ...current, repeat_type: event.target.value }))} className="w-full min-w-0 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-base text-white"><option value="daily">ทุกวัน</option><option value="weekly">เลือกวันในสัปดาห์</option><option value="monthly">เลือกวันที่ของทุกเดือน</option><option value="yearly">เลือกวันและเดือนของทุกปี</option></select></label>
+          {draft.repeat_type === 'weekly' && <fieldset className="min-w-0 sm:col-span-2"><legend className="mb-2 text-xs font-semibold text-slate-300">เลือกวัน (เลือกได้หลายวัน)</legend><div className="grid grid-cols-2 gap-2 sm:grid-cols-4">{WEEKDAYS.map((day) => <label key={day.value} className="flex min-h-10 items-center gap-2 rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm text-slate-200"><input type="checkbox" checked={draft.remind_weekdays.includes(day.value)} onChange={(event) => setDraft((current) => ({ ...current, remind_weekdays: event.target.checked ? [...current.remind_weekdays, day.value].sort((a, b) => a - b) : current.remind_weekdays.filter((value) => value !== day.value) }))} className="accent-blue-500" />{day.label}</label>)}</div></fieldset>}
+          {draft.repeat_type === 'monthly' && <label className="block min-w-0"><span className="mb-1 block text-xs font-semibold text-slate-300">วันที่ของเดือน</span><select value={draft.remind_day} onChange={(event) => setDraft((current) => ({ ...current, remind_day: event.target.value }))} className="w-full min-w-0 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-base text-white">{Array.from({ length: 31 }, (_, index) => <option key={index + 1} value={index + 1}>{index + 1}</option>)}</select><span className="mt-1 block text-[11px] text-slate-500">เดือนที่ไม่มีวันที่เลือกจะข้ามการแจ้งเตือน</span></label>}
           {draft.repeat_type === 'yearly' && <div className="grid min-w-0 grid-cols-2 gap-3"><label className="block min-w-0"><span className="mb-1 block text-xs font-semibold text-slate-300">เดือน</span><select value={draft.remind_month} onChange={(event) => setDraft((current) => { const remind_month = event.target.value; const maxDay = remind_month === '2' ? 29 : [4, 6, 9, 11].includes(Number(remind_month)) ? 30 : 31; return { ...current, remind_month, remind_day: String(Math.min(Number(current.remind_day), maxDay)) }; })} className="w-full min-w-0 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-base text-white">{monthNames.map((name, index) => <option key={name} value={index + 1}>{name}</option>)}</select></label><label className="block min-w-0"><span className="mb-1 block text-xs font-semibold text-slate-300">วันที่</span><select value={draft.remind_day} onChange={(event) => setDraft((current) => ({ ...current, remind_day: event.target.value }))} className="w-full min-w-0 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-base text-white">{Array.from({ length: Number(draft.remind_month) === 2 ? 29 : [4, 6, 9, 11].includes(Number(draft.remind_month)) ? 30 : 31 }, (_, index) => <option key={index + 1} value={index + 1}>{index + 1}</option>)}</select></label></div>}
           <label className="block min-w-0"><span className="mb-1 block text-xs font-semibold text-slate-300">เวลา</span><input type="time" value={draft.remind_at} onChange={(event) => setDraft((current) => ({ ...current, remind_at: event.target.value }))} required className="w-full min-w-0 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-base text-white" /></label>
           <div className="flex flex-wrap items-end gap-2 sm:col-span-2"><button type="submit" disabled={saving} className="min-h-11 rounded-xl bg-blue-600 px-5 text-sm font-bold text-white disabled:opacity-60">{saving ? 'กำลังบันทึก…' : editingId ? 'บันทึกการแก้ไข' : 'เพิ่มการแจ้งเตือน'}</button>{editingId && <button type="button" onClick={() => { setEditingId(''); setDraft(emptyReminderDraft); }} className="min-h-11 rounded-xl border border-slate-700 px-4 text-sm font-semibold text-slate-300">ยกเลิก</button>}</div>
