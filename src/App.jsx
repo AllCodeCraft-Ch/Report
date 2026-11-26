@@ -13,7 +13,10 @@ const PAGES = {
   TRIPS: 'trips',
   BACKUP: 'backup',
   FINANCE: 'finance',
+  REMINDERS: 'reminders',
 };
+
+const SHARED_PAGE_PIN = '101268';
 
 function useNow(interval = 1000) {
   const [now, setNow] = useState(new Date());
@@ -43,6 +46,65 @@ function MonthlyReminder({ onNavigate }) {
       <button type="button" onClick={onNavigate} className="shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-semibold text-amber-900 hover:bg-amber-100">ไปหน้าตัดรอบ</button>
     </div>
   );
+}
+
+function bangkokDateTimeParts(date = new Date()) {
+  return Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(date).map((part) => [part.type, part.value]));
+}
+
+function useScheduledReminderAlerts(ownerId) {
+  useEffect(() => {
+    if (!ownerId || !supabase) return undefined;
+    let active = true;
+    let reminders = [];
+    const shownInMemory = new Set();
+    const load = async () => {
+      const { data, error } = await supabase.from('scheduled_notifications')
+        .select('id,title,repeat_type,remind_at,remind_month,remind_day')
+        .eq('owner_id', ownerId).eq('enabled', true);
+      if (active && !error) reminders = data || [];
+    };
+    const check = () => {
+      if (!active || document.visibilityState === 'hidden' || !reminders.length) return;
+      const now = bangkokDateTimeParts();
+      const today = `${now.year}-${now.month}-${now.day}`;
+      const currentMinute = Number(now.hour) * 60 + Number(now.minute);
+      const due = [];
+      reminders.forEach((reminder) => {
+        if (reminder.repeat_type === 'yearly'
+          && (Number(reminder.remind_month) !== Number(now.month) || Number(reminder.remind_day) !== Number(now.day))) return;
+        const [hour, minute] = String(reminder.remind_at || '').slice(0, 5).split(':').map(Number);
+        const delta = currentMinute - (hour * 60 + minute);
+        if (!Number.isFinite(delta) || delta < 0 || delta > 3) return;
+        const key = `scheduled-notification:${ownerId}:${reminder.id}:${today}`;
+        try {
+          if (window.sessionStorage.getItem(key)) return;
+          window.sessionStorage.setItem(key, 'shown');
+        } catch {
+          if (shownInMemory.has(key)) return;
+          shownInMemory.add(key);
+        }
+        due.push(reminder.title);
+      });
+      if (due.length) requestAppDialog('alert', `ถึงเวลาแจ้งเตือนแล้ว\n\n${due.map((title) => `• ${title}`).join('\n')}`);
+    };
+    const reload = () => { load().then(check).catch(() => {}); };
+    load().then(check).catch(() => {});
+    const timer = window.setInterval(check, 15_000);
+    const onUpdated = () => reload();
+    const onVisibility = () => { if (document.visibilityState === 'visible') check(); };
+    window.addEventListener('scheduled-notifications-updated', onUpdated);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      window.removeEventListener('scheduled-notifications-updated', onUpdated);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [ownerId]);
 }
 
 function localISODate(date = new Date()) {
@@ -224,6 +286,7 @@ const NAV_ITEMS = [
   { page: PAGES.MEDIA,    label: 'บันทึกภาพ/วิดีโอ', Icon: IconPhoto },
   { page: PAGES.TRIPS,    label: 'ออกต่างจังหวัด', Icon: IconPlane },
   { page: PAGES.FINANCE,  label: 'รายการเงิน', Icon: IconSettings },
+  { page: PAGES.REMINDERS, label: 'แจ้งเตือน', Icon: IconClock },
 ];
 
 function parseSheetTable(rawText) {
@@ -367,6 +430,7 @@ function parseTripSheetRows(rows) {
 
 function Layout({ currentPage, setCurrentPage, onLogout, user }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  useScheduledReminderAlerts(user?.id);
 
   useEffect(() => {
     if (!sidebarOpen) return undefined;
@@ -518,6 +582,7 @@ function Layout({ currentPage, setCurrentPage, onLogout, user }) {
           {currentPage === PAGES.SYSTEM   && <SystemPage />}
           {currentPage === PAGES.BACKUP   && <BackupPage />}
           {currentPage === PAGES.FINANCE  && <PersonalFinancePage ownerId={user?.id} />}
+          {currentPage === PAGES.REMINDERS && <ScheduledNotificationsPage ownerId={user?.id} />}
           {currentPage === PAGES.TRIPS    && <ProvincialTripsPage />}
         </main>
       </div>
@@ -4515,10 +4580,135 @@ function SystemPage() {
   );
 }
 
+function SharedPagePinGate({ title, onUnlock }) {
+  const [pinCode, setPinCode] = useState('');
+  const [error, setError] = useState('');
+  const submit = (event) => {
+    event.preventDefault();
+    if (pinCode === SHARED_PAGE_PIN) {
+      setError('');
+      setPinCode('');
+      onUnlock();
+    } else {
+      setError('รหัสไม่ถูกต้อง');
+      setPinCode('');
+    }
+  };
+  return (
+    <div className="mx-auto max-w-xl space-y-4 rounded-2xl border border-slate-700 bg-slate-900 p-5 text-white shadow-sm sm:p-7">
+      <div><p className="text-xs font-semibold uppercase tracking-[.18em] text-cyan-300">{title}</p><h1 className="mt-1 text-xl font-bold">ใส่ PIN 6 หลัก</h1></div>
+      <form onSubmit={submit} className="space-y-4">
+        <label className="block"><span className="mb-1 block text-xs font-semibold text-slate-300">PIN ตัวเลข 6 หลัก</span><input type="password" value={pinCode} onChange={(event) => setPinCode(event.target.value.replace(/\D/g, '').slice(0, 6))} inputMode="numeric" autoComplete="new-password" pattern="[0-9]{6}" maxLength={6} required className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-lg tracking-[.3em] text-white" /></label>
+        {error && <p role="alert" className="text-sm text-rose-300">{error}</p>}
+        <button type="submit" disabled={pinCode.length !== 6} className="min-h-11 w-full rounded-xl bg-blue-600 px-4 text-sm font-bold text-white disabled:opacity-60">เข้าใช้งาน</button>
+      </form>
+    </div>
+  );
+}
+
+const emptyReminderDraft = { title: '', repeat_type: 'daily', remind_at: '09:00', remind_month: '1', remind_day: '1' };
+
+function ScheduledNotificationsPage({ ownerId }) {
+  const [unlocked, setUnlocked] = useState(false);
+  const [reminders, setReminders] = useState([]);
+  const [draft, setDraft] = useState(emptyReminderDraft);
+  const [editingId, setEditingId] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+
+  const loadReminders = async () => {
+    if (!supabase || !ownerId) { setError('ยังไม่ได้เชื่อมต่อบัญชี'); setLoading(false); return; }
+    setLoading(true); setError('');
+    const { data, error: queryError } = await supabase.from('scheduled_notifications')
+      .select('id,owner_id,title,repeat_type,remind_at,remind_month,remind_day,enabled,created_at')
+      .eq('owner_id', ownerId).order('created_at', { ascending: false });
+    if (queryError) setError('โหลดรายการแจ้งเตือนไม่สำเร็จ ตรวจสอบ migration แล้วลองใหม่');
+    else setReminders(data || []);
+    setLoading(false);
+  };
+
+  useEffect(() => { if (unlocked) loadReminders(); }, [unlocked, ownerId]);
+
+  const saveReminder = async (event) => {
+    event.preventDefault();
+    if (!supabase || !ownerId || !draft.title.trim()) { setError('กรอกหัวข้อแจ้งเตือนให้ครบ'); return; }
+    const payload = {
+      owner_id: ownerId,
+      title: draft.title.trim(),
+      repeat_type: draft.repeat_type,
+      remind_at: draft.remind_at,
+      remind_month: draft.repeat_type === 'yearly' ? Number(draft.remind_month) : null,
+      remind_day: draft.repeat_type === 'yearly' ? Number(draft.remind_day) : null,
+      enabled: true,
+    };
+    setSaving(true); setError(''); setMessage('');
+    const result = editingId
+      ? await supabase.from('scheduled_notifications').update(payload).eq('id', editingId).eq('owner_id', ownerId).select().single()
+      : await supabase.from('scheduled_notifications').insert(payload).select().single();
+    if (result.error || !result.data) setError('บันทึกไม่สำเร็จ ตรวจสอบว่าตารางแจ้งเตือนพร้อมใช้งาน');
+    else {
+      setDraft(emptyReminderDraft); setEditingId('');
+      setMessage(editingId ? 'แก้ไขการแจ้งเตือนแล้ว' : 'เพิ่มการแจ้งเตือนแล้ว');
+      await loadReminders();
+      window.dispatchEvent(new Event('scheduled-notifications-updated'));
+    }
+    setSaving(false);
+  };
+
+  const editReminder = (item) => {
+    setEditingId(item.id);
+    setDraft({ title: item.title, repeat_type: item.repeat_type, remind_at: String(item.remind_at).slice(0, 5), remind_month: String(item.remind_month || 1), remind_day: String(item.remind_day || 1) });
+    setMessage(''); setError('');
+  };
+
+  const toggleReminder = async (item) => {
+    const { error: updateError } = await supabase.from('scheduled_notifications').update({ enabled: !item.enabled }).eq('id', item.id).eq('owner_id', ownerId);
+    if (updateError) { setError('เปลี่ยนสถานะไม่สำเร็จ'); return; }
+    await loadReminders();
+    window.dispatchEvent(new Event('scheduled-notifications-updated'));
+  };
+
+  const deleteReminder = async (item) => {
+    if (!await requestAppDialog('confirm', `ลบการแจ้งเตือน “${item.title}” หรือไม่?`)) return;
+    const { error: deleteError } = await supabase.from('scheduled_notifications').delete().eq('id', item.id).eq('owner_id', ownerId);
+    if (deleteError) { setError('ลบการแจ้งเตือนไม่สำเร็จ'); return; }
+    setReminders((current) => current.filter((reminder) => reminder.id !== item.id));
+    window.dispatchEvent(new Event('scheduled-notifications-updated'));
+  };
+
+  if (!unlocked) return <SharedPagePinGate title="แจ้งเตือน" onUnlock={() => setUnlocked(true)} />;
+
+  const monthNames = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+  const formatSchedule = (item) => item.repeat_type === 'daily'
+    ? `ทุกวัน เวลา ${String(item.remind_at).slice(0, 5)}`
+    : `ทุกปี วันที่ ${item.remind_day} ${monthNames[Number(item.remind_month) - 1]} เวลา ${String(item.remind_at).slice(0, 5)}`;
+
+  return (
+    <div className="mx-auto max-w-5xl space-y-5">
+      <header><p className="text-xs font-semibold uppercase tracking-[.18em] text-cyan-300">ตั้งเวลาแจ้งเตือน</p><h1 className="mt-1 text-2xl font-bold text-white">แจ้งเตือน</h1><p className="mt-1 text-sm text-slate-400">กำหนดให้เตือนทุกวันหรือวนซ้ำทุกปี ตามเวลาไทย</p></header>
+      <section className="overflow-hidden rounded-2xl border border-slate-700 bg-slate-900 text-white shadow-sm">
+        <div className="border-b border-slate-700 bg-gradient-to-r from-blue-950 to-cyan-950 px-5 py-4"><h2 className="text-base font-bold">{editingId ? 'แก้ไขการแจ้งเตือน' : 'เพิ่มการแจ้งเตือน'}</h2></div>
+        <form onSubmit={saveReminder} className="grid min-w-0 grid-cols-1 gap-3 p-4 sm:grid-cols-2 sm:p-5">
+          <label className="block min-w-0 sm:col-span-2"><span className="mb-1 block text-xs font-semibold text-slate-300">หัวข้อ</span><input value={draft.title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} maxLength={120} required placeholder="เช่น ชำระค่าบริการ" className="w-full min-w-0 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-base text-white" /></label>
+          <label className="block min-w-0"><span className="mb-1 block text-xs font-semibold text-slate-300">การวนซ้ำ</span><select value={draft.repeat_type} onChange={(event) => setDraft((current) => ({ ...current, repeat_type: event.target.value }))} className="w-full min-w-0 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-base text-white"><option value="daily">ทุกวัน</option><option value="yearly">ทุกปี</option></select></label>
+          {draft.repeat_type === 'yearly' && <div className="grid min-w-0 grid-cols-2 gap-3"><label className="block min-w-0"><span className="mb-1 block text-xs font-semibold text-slate-300">เดือน</span><select value={draft.remind_month} onChange={(event) => setDraft((current) => { const remind_month = event.target.value; const maxDay = remind_month === '2' ? 29 : [4, 6, 9, 11].includes(Number(remind_month)) ? 30 : 31; return { ...current, remind_month, remind_day: String(Math.min(Number(current.remind_day), maxDay)) }; })} className="w-full min-w-0 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-base text-white">{monthNames.map((name, index) => <option key={name} value={index + 1}>{name}</option>)}</select></label><label className="block min-w-0"><span className="mb-1 block text-xs font-semibold text-slate-300">วันที่</span><select value={draft.remind_day} onChange={(event) => setDraft((current) => ({ ...current, remind_day: event.target.value }))} className="w-full min-w-0 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-base text-white">{Array.from({ length: Number(draft.remind_month) === 2 ? 29 : [4, 6, 9, 11].includes(Number(draft.remind_month)) ? 30 : 31 }, (_, index) => <option key={index + 1} value={index + 1}>{index + 1}</option>)}</select></label></div>}
+          <label className="block min-w-0"><span className="mb-1 block text-xs font-semibold text-slate-300">เวลา</span><input type="time" value={draft.remind_at} onChange={(event) => setDraft((current) => ({ ...current, remind_at: event.target.value }))} required className="w-full min-w-0 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-base text-white" /></label>
+          <div className="flex flex-wrap items-end gap-2 sm:col-span-2"><button type="submit" disabled={saving} className="min-h-11 rounded-xl bg-blue-600 px-5 text-sm font-bold text-white disabled:opacity-60">{saving ? 'กำลังบันทึก…' : editingId ? 'บันทึกการแก้ไข' : 'เพิ่มการแจ้งเตือน'}</button>{editingId && <button type="button" onClick={() => { setEditingId(''); setDraft(emptyReminderDraft); }} className="min-h-11 rounded-xl border border-slate-700 px-4 text-sm font-semibold text-slate-300">ยกเลิก</button>}</div>
+          {error && <p role="alert" className="text-sm text-rose-300 sm:col-span-2">{error}</p>}{message && <p role="status" className="text-sm text-emerald-300 sm:col-span-2">{message}</p>}
+        </form>
+      </section>
+      <section className="rounded-2xl border border-slate-700 bg-slate-900 p-4 text-white sm:p-5"><div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-base font-bold">รายการที่ตั้งไว้</h2><button type="button" onClick={loadReminders} className="min-h-9 rounded-lg border border-slate-700 px-3 text-xs font-semibold text-slate-300">รีเฟรช</button></div>
+        {loading ? <p className="py-6 text-sm text-slate-400">กำลังโหลด…</p> : reminders.length === 0 ? <p className="py-6 text-sm text-slate-400">ยังไม่มีการแจ้งเตือน</p> : <ul className="mt-3 space-y-2">{reminders.map((item) => <li key={item.id} className="flex min-w-0 flex-col gap-3 rounded-xl border border-slate-800 bg-slate-950/60 p-3 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0"><p className="break-words text-sm font-semibold text-white">{item.title}</p><p className="mt-1 text-xs text-cyan-200">{formatSchedule(item)} · {item.enabled ? 'เปิดอยู่' : 'ปิดอยู่'}</p></div><div className="flex flex-wrap gap-2"><button type="button" onClick={() => toggleReminder(item)} className="min-h-9 rounded-lg border border-slate-700 px-3 text-xs font-semibold text-slate-200">{item.enabled ? 'ปิด' : 'เปิด'}</button><button type="button" onClick={() => editReminder(item)} className="min-h-9 rounded-lg border border-slate-700 px-3 text-xs font-semibold text-slate-200">แก้ไข</button><button type="button" onClick={() => deleteReminder(item)} className="min-h-9 rounded-lg border border-rose-900/60 px-3 text-xs font-semibold text-rose-300">ลบ</button></div></li>)}</ul>}
+      </section>
+      <aside className="rounded-xl border border-amber-900/60 bg-amber-950/30 px-4 py-3 text-xs leading-5 text-amber-100">ระบบจะแสดง popup เมื่อเปิดแอปอยู่และถึงเวลาแจ้งเตือน โดยอิงเวลา Asia/Bangkok การแจ้งเตือนขณะปิดแอปต้องตั้งค่า Web Push เพิ่มเติม</aside>
+    </div>
+  );
+}
+
 function PersonalFinancePage({ ownerId }) {
   const [pinMode, setPinMode] = useState('locked');
-  const [pinError, setPinError] = useState('');
-  const [pinCode, setPinCode] = useState('');
   const [records, setRecords] = useState([]);
   const [recordsLoading, setRecordsLoading] = useState(true);
   const [recordError, setRecordError] = useState('');
@@ -4553,19 +4743,7 @@ function PersonalFinancePage({ ownerId }) {
     return () => { active = false; };
   }, [pinMode, ownerId]);
 
-  const submitPin = (event) => {
-    event.preventDefault();
-    const pin = pinCode.trim();
-    if (!/^\d{6}$/.test(pin)) { setPinError('กรอกรหัสตัวเลข 6 หลัก'); return; }
-    setPinError('');
-    if (pin === '101268') {
-      setPinMode('open');
-      setPinCode('');
-    } else {
-      setPinError('รหัสไม่ถูกต้อง');
-      setPinCode('');
-    }
-  };
+  const unlock = () => setPinMode('open');
 
   const saveRecord = async (event) => {
     event.preventDefault();
@@ -4605,16 +4783,7 @@ function PersonalFinancePage({ ownerId }) {
   const dayRecords = records.filter((record) => dateKey(record.transactionAt) === selectedDate);
   const sumAmount = (list) => list.reduce((sum, record) => sum + BigInt(record.amountSatang), 0n);
 
-  if (pinMode !== 'open') return (
-    <div className="mx-auto max-w-xl space-y-4 rounded-2xl border border-slate-700 bg-slate-900 p-5 text-white shadow-sm sm:p-7">
-      <div><p className="text-xs font-semibold uppercase tracking-[.18em] text-cyan-300">รายการเงิน</p><h1 className="mt-1 text-xl font-bold">ใส่ PIN 6 หลัก</h1></div>
-      {pinMode === 'locked' && <form onSubmit={submitPin} className="space-y-4">
-        <label className="block"><span className="mb-1 block text-xs font-semibold text-slate-300">PIN ตัวเลข 6 หลัก</span><input type="password" value={pinCode} onChange={(event) => setPinCode(event.target.value.replace(/\D/g, '').slice(0, 6))} inputMode="numeric" autoComplete="new-password" pattern="[0-9]{6}" maxLength={6} required className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-lg tracking-[.3em] text-white" /></label>
-        {pinError && <p role="alert" className="text-sm text-rose-300">{pinError}</p>}
-        <button type="submit" disabled={pinCode.length !== 6} className="min-h-11 w-full rounded-xl bg-blue-600 px-4 text-sm font-bold text-white disabled:opacity-60">เข้าใช้งาน</button>
-      </form>}
-    </div>
-  );
+  if (pinMode !== 'open') return <SharedPagePinGate title="รายการเงิน" onUnlock={unlock} />;
 
   const visibleMonthRecords = [...monthRecords].sort((a, b) => b.transactionAt.localeCompare(a.transactionAt));
   const cancelEdit = () => { setEditingId(''); setAmount(''); setDetail(''); };
